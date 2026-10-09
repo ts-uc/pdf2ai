@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf2ai-vector"
+version = "0.1.0"
+description = "PDF vector to experimental Illustrator 2020 native conversion with spot colors"
+requires-python = ">=3.10"
+dependencies = ["pikepdf>=9,<11", "PyMuPDF>=1.24,<2", "fonttools>=4.50,<5", "zstandard>=0.23; python_version < '3.14'"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "PyMuPDF>=1.24"]
+build = ["pyinstaller>=6"]
+
+[project.scripts]
+pdf2ai = "pdf2ai.cli:main"
+pdf2ai-gui = "pdf2ai.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

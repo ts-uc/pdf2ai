@@ -1,0 +1,296 @@
+{
+  "native": [
+    {
+      "panel": 1,
+      "title": "Paths, curves, fill rules, stroke styles",
+      "features": "m l c v y h re; f f* S; dash, cap, join, miter, zero-width fill"
+    },
+    {
+      "panel": 2,
+      "title": "Paint operators and nonzero clipping",
+      "features": "F s B B* b b* n; W nonzero clip; fill + stroke"
+    },
+    {
+      "panel": 3,
+      "title": "ExtGState line style",
+      "features": "LW LC LJ ML D via gs"
+    },
+    {
+      "panel": 4,
+      "title": "Transforms and graphics state",
+      "features": "q/Q; translation, uniform scale, rotation; shear/nonuniform fills"
+    },
+    {
+      "panel": 5,
+      "title": "RGB, CMYK and gray",
+      "features": "DeviceRGB / DeviceCMYK / DeviceGray"
+    },
+    {
+      "panel": 6,
+      "title": "Spot tints and overprint",
+      "features": "Separation Type2/Type4; tint 25/50/75/100%; CMYK overprint OPM1"
+    },
+    {
+      "panel": 7,
+      "title": "Forms, clipping, radial, all 16 blends",
+      "features": "nested resources, Form BBox/matrix; W*; fill/stroke opacity"
+    },
+    {
+      "panel": 8,
+      "title": "RGB axial gradient",
+      "features": "direct sh; extended ends; Type2 function"
+    },
+    {
+      "panel": 9,
+      "title": "RGB radial gradient",
+      "features": "direct sh; extended ends; Type2 function"
+    },
+    {
+      "panel": 10,
+      "title": "CMYK axial gradient",
+      "features": "direct sh; extended ends; Type2 function"
+    },
+    {
+      "panel": 11,
+      "title": "CMYK radial gradient",
+      "features": "direct sh; extended ends; Type2 function"
+    },
+    {
+      "panel": 12,
+      "title": "Gray axial gradient",
+      "features": "direct sh; extended ends; Type2 function"
+    },
+    {
+      "panel": 13,
+      "title": "Gray radial gradient",
+      "features": "direct sh; extended ends; Type2 function"
+    },
+    {
+      "panel": 14,
+      "title": "Nonlinear gradient",
+      "features": "positive exponent N=2; editable adaptive stops"
+    },
+    {
+      "panel": 15,
+      "title": "Stitched gradient",
+      "features": "continuous Type3 function / two Type2 functions"
+    },
+    {
+      "panel": 16,
+      "title": "Rotated gradient pattern",
+      "features": "PatternType2; rotation/translation matrix"
+    },
+    {
+      "panel": 17,
+      "title": "Image: gray1",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 18,
+      "title": "Image: gray2",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 19,
+      "title": "Image: gray4",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 20,
+      "title": "Image: gray8",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 21,
+      "title": "Image: gray16",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 22,
+      "title": "Image: cmyk",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 23,
+      "title": "Image: rgb16",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 24,
+      "title": "Image: cmyk16",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 25,
+      "title": "Image: indexed",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 26,
+      "title": "Image: jpeg",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 27,
+      "title": "Image: decode",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 28,
+      "title": "Image: soft-mask",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 29,
+      "title": "Image: cmyk-soft-mask",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 30,
+      "title": "Image: hard-mask",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 31,
+      "title": "Image: color-key",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 32,
+      "title": "Image: stencil",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 33,
+      "title": "Image: stencil-inverted",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 34,
+      "title": "Image: rgb",
+      "features": "image transform + clipping; opaque/alpha as applicable"
+    },
+    {
+      "panel": 35,
+      "title": "Standard Latin fonts",
+      "features": "12 standard fonts; automatic editable outlines"
+    },
+    {
+      "panel": 36,
+      "title": "Text modes, encoding and spacing",
+      "features": "Tr 0..7; TJ, quote, double quote; Tc Tw Tz Ts TL; WinAnsi/MacRoman/Differences"
+    },
+    {
+      "panel": 37,
+      "title": "Embedded font: cid",
+      "features": "font program; PDF widths; CIDToGIDMap/Identity-H on CID; OCG layer"
+    },
+    {
+      "panel": 38,
+      "title": "Embedded font: ttf",
+      "features": "font program; PDF widths; CIDToGIDMap/Identity-H on CID; OCG layer"
+    },
+    {
+      "panel": 39,
+      "title": "Embedded font: opentype",
+      "features": "font program; PDF widths; CIDToGIDMap/Identity-H on CID; OCG layer"
+    },
+    {
+      "panel": 40,
+      "title": "Embedded font: cff",
+      "features": "font program; PDF widths; CIDToGIDMap/Identity-H on CID; OCG layer"
+    },
+    {
+      "panel": 41,
+      "title": "Layers and structural tags",
+      "features": "Japanese names; hidden, locked, nonprinting, empty; interleaved; Form/image OC"
+    },
+    {
+      "panel": 42,
+      "title": "Text clip and rotation",
+      "features": "rotated text outline and text clipping"
+    }
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "rotation": 0,
+      "user_unit": 2,
+      "expected_mode": "vector"
+    },
+    {
+      "page": 2,
+      "rotation": 90,
+      "user_unit": 2,
+      "expected_mode": "vector"
+    },
+    {
+      "page": 3,
+      "rotation": 180,
+      "user_unit": 2,
+      "expected_mode": "vector"
+    },
+    {
+      "page": 4,
+      "rotation": 270,
+      "user_unit": 2,
+      "expected_mode": "vector"
+    }
+  ],
+  "fallback": [
+    {
+      "page": 1,
+      "title": "Knockout transparency group",
+      "reason_contains": "nonknockout",
+      "expected_mode": "raster-fallback"
+    },
+    {
+      "page": 2,
+      "title": "Hairline stroke",
+      "reason_contains": "hairline",
+      "expected_mode": "raster-fallback"
+    },
+    {
+      "page": 3,
+      "title": "Nonuniform stroke transform",
+      "reason_contains": "Nonuniform",
+      "expected_mode": "raster-fallback"
+    },
+    {
+      "page": 4,
+      "title": "Lab color space",
+      "reason_contains": "Color components",
+      "expected_mode": "raster-fallback"
+    },
+    {
+      "page": 5,
+      "title": "PDF annotation",
+      "reason_contains": "Annotations",
+      "expected_mode": "raster-fallback"
+    },
+    {
+      "page": 6,
+      "title": "Tiling pattern",
+      "reason_contains": "shading patterns",
+      "expected_mode": "raster-fallback"
+    },
+    {
+      "page": 7,
+      "title": "Nonconcentric radial gradient",
+      "reason_contains": "concentric",
+      "expected_mode": "raster-fallback"
+    },
+    {
+      "page": 8,
+      "title": "Complex layer membership (OCMD)",
+      "reason_contains": "OCMD",
+      "expected_mode": "raster-fallback"
+    },
+    {
+      "page": 9,
+      "title": "Interpolated image stencil",
+      "reason_contains": "Interpolated",
+      "expected_mode": "raster-fallback"
+    }
+  ]
+}
