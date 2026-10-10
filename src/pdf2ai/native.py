@@ -16,6 +16,10 @@ from .codec import MARKER, compress, decode_private
 from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, BLEND_MODES, read_drawing
 
 
+AI_CREATOR = "Adobe Illustrator 24.0 (Macintosh)"
+AI_PRODUCER = "Adobe PDF library 15.00"
+
+
 def num(value: float) -> str:
     if not math.isfinite(value): raise ConversionError("Nonfinite path coordinate")
     text = f"{value:.8f}".rstrip("0").rstrip(".")
@@ -305,12 +309,14 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
         piece = page.obj.get("/PieceInfo", pikepdf.Dictionary())
         piece.Illustrator = pikepdf.Dictionary(LastModified=pikepdf.String(timestamp),Private=dictionary)
         page.obj.PieceInfo = piece
-        pdf.docinfo["/Creator"] = "pdf2ai-vector (experimental Illustrator 2020 writer)"
+        pdf.docinfo["/Creator"] = AI_CREATOR
+        pdf.docinfo["/Producer"] = AI_PRODUCER
         # Do not claim PDF/X certification for a newly written file without preflight.
         for key in ("/GTS_PDFXVersion", "/GTS_PDFXConformance"):
             if key in pdf.docinfo: del pdf.docinfo[key]
-        with pdf.open_metadata(set_pikepdf_as_editor=False) as metadata:
-            metadata["xmp:CreatorTool"] = "pdf2ai-vector"
+        with pdf.open_metadata(set_pikepdf_as_editor=False, update_docinfo=False) as metadata:
+            metadata["xmp:CreatorTool"] = AI_CREATOR
+            metadata["pdf:Producer"] = AI_PRODUCER
             for key in ("pdfxid:GTS_PDFXVersion", "pdfx:GTS_PDFXVersion", "pdfx:GTS_PDFXConformance"):
                 if key in metadata: del metadata[key]
         fd,temporary = tempfile.mkstemp(prefix=".pdf2ai-",suffix=".ai",dir=output.parent)

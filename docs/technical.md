@@ -146,6 +146,8 @@ AIのPDF表示部分は元PDFのページ内容・リソース・OutputIntentを
 - `%AI24_ZStandard_Data`とZstandard圧縮された編集データ。
 - 65,536バイトごとの`AIPrivateDataN`ブロック。
 
+作成アプリ関連のメタデータはCC2020の表記に統一します。PDFの`Creator`とXMPの`xmp:CreatorTool`は`Adobe Illustrator 24.0 (Macintosh)`、PDFとXMPの`Producer`は`Adobe PDF library 15.00`です。これは互換用の固定表記で、実際の生成処理は本ツールが行います。元PDFのタイトル・著者情報は保持します。
+
 画像は元のピクセル寸法で埋め込み、透過のアルファ値を保持します。JPEGを展開する際のデコーダーの差や色の丸めにより、元PDFとわずかな表示差が生じることがあります。
 
 元PDFのCMYK OutputIntentは表示部分に保持されますが、Illustratorで編集して再保存する際の作業用カラープロファイルは完全には再現していません。開き直し・再保存による色の見え方は、Illustratorのカラー設定で変わり得ます。編集可能なベクター変換ではCMYKの数値と特色の代替値を保持します。画像化した編集データはRGB画像になります。

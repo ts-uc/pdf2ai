@@ -189,3 +189,34 @@ def test_cli_rejects_ai_as_input(tmp_path):
     source=tmp_path/'reference.ai';source.write_bytes(b'reference')
     assert main([str(source),'--overwrite'])==1
     assert source.read_bytes()==b'reference'
+
+
+@pytest.mark.parametrize('rasterized',[False,True])
+def test_illustrator_creator_and_producer_metadata(tmp_path,rasterized):
+    from pdf2ai.native import AI_CREATOR, AI_PRODUCER
+    source=tmp_path/'input.pdf';output=tmp_path/'output.ai'
+    make_pdf(source,b'10 10 30 30 re f')
+    with pikepdf.open(source,allow_overwriting_input=True) as pdf:
+        pdf.docinfo['/Creator']='Scribus'
+        pdf.docinfo['/Producer']='Original PDF writer'
+        pdf.docinfo['/Title']='Artwork'
+        pdf.docinfo['/Author']='Designer'
+        if rasterized:
+            pdf.pages[0].Group=pikepdf.Dictionary(S=pikepdf.Name.Transparency,K=True,CS=pikepdf.Name.DeviceCMYK)
+        with pdf.open_metadata(set_pikepdf_as_editor=False,update_docinfo=False) as metadata:
+            metadata['xmp:CreatorTool']='Scribus'
+            metadata['pdf:Producer']='Original PDF writer'
+        pdf.save(source)
+    report=convert(source,output,raster_dpi=72)
+    assert report['rasterized']==rasterized
+    with pikepdf.open(output) as pdf:
+        assert str(pdf.docinfo['/Creator'])==AI_CREATOR
+        assert str(pdf.docinfo['/Producer'])==AI_PRODUCER
+        assert str(pdf.docinfo['/Title'])=='Artwork'
+        assert str(pdf.docinfo['/Author'])=='Designer'
+        with pdf.open_metadata(set_pikepdf_as_editor=False) as metadata:
+            assert metadata['xmp:CreatorTool']==AI_CREATOR
+            assert metadata['pdf:Producer']==AI_PRODUCER
+        private=read_private(pdf)
+        assert b'%%Creator: Adobe Illustrator(R) 24.0' in private
+        assert b'pdf2ai-vector' not in private
