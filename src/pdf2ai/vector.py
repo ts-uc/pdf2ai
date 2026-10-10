@@ -513,8 +513,11 @@ def read_drawing(page, *, root=None) -> Drawing:
             obj = args[0]
             matrix = tuple(map(float,obj.get('/Matrix',IDENTITY)))
             bounds = tuple(map(float,obj.get('/BBox', [])))
-            if len(matrix)!=6 or len(bounds)!=4 or not all(math.isfinite(v) for v in (*matrix,*bounds)) or bounds[2]<bounds[0] or bounds[3]<bounds[1]:
+            if len(matrix)!=6 or len(bounds)!=4 or not all(math.isfinite(v) for v in (*matrix,*bounds)):
                 raise ConversionError("Invalid Form matrix or BBox")
+            # PDF rectangles may specify opposite corners in either order.
+            # Scribus outlined glyph Forms commonly use descending Y bounds.
+            bounds=(min(bounds[0],bounds[2]),min(bounds[1],bounds[3]),max(bounds[0],bounds[2]),max(bounds[1],bounds[3]))
             scopes.append((copy(state),pattern_base,len(stack),marked))
             if obj.get('/Group') is not None and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal'):
                 raise ConversionError("Transparency applied to a whole Form group is unsupported")

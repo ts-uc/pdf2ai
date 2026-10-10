@@ -139,7 +139,7 @@ python -m pytest -q
 python tools/make_conversion_suite.py --verify
 ```
 
-自動テスト58件は、変換元とAIのPDF表示の画素一致、統合サンプルの全14ページ、特色濃度、座標変換、未対応PDFの拒否、上書き防止、編集ストリームの圧縮・展開を検証します。
+自動テスト75件は、変換元とAIのPDF表示の画素一致、統合サンプルの全14ページ、特色濃度、座標変換、未対応PDFの拒否、上書き防止、編集ストリームの圧縮・展開を検証します。
 
 Python不要のGUI実行ファイルを配る場合は、**配布する各OS上で**ビルドしてください。
 
@@ -164,3 +164,32 @@ PDFにOCG（表示を切り替えられるレイヤー）が残っている場�
 統合検証用PDFのレイヤーパネルで、日本語名・非表示・ロック・非印刷・空レイヤーを確認できます。対象アプリケーションでの互換性は利用環境で確認してください。
 
 テストの一時ファイルは`tests/.tmp/`に作成されます。検証レポートのファイルパスはプロジェクトのルートからの相対パスで保存します。
+
+## ScribusからAIを書き出す
+
+`integrations/scribus/export_ai.py`をScribusのScripterから実行すると、開いている文書を直接AIに書き出せます。Scripterが有効なScribus 1.6以降を対象にしています。Scribus内のPythonに変換用パッケージをインストールする必要はありません。
+
+最初にプロジェクトのルートで変換用の仮想環境を用意します。
+
+```sh
+python -m venv .venv
+# macOS / Linux
+.venv/bin/python -m pip install .
+# Windows
+.venv\Scripts\python.exe -m pip install .
+```
+
+1. Scribusで書き出す文書を開きます。未保存の編集内容も対象です。
+2. **スクリプト → スクリプトを実行**から`integrations/scribus/export_ai.py`を選びます。
+3. 対象ページを入力します。`all`は全ページ、`current`は現在のページ、`1,3-5`は指定ページです。
+4. 保存先とAIファイル名を選びます。
+
+1ページなら指定した名前で保存し、複数ページなら`design_001.ai`、`design_003.ai`のように元のページ番号を付けます。結果は同じフォルダーの`design.report.json`に保存します。既存のAIまたはレポートがある場合は上書きを確認します。元のSLAファイルの保存や編集内容の変更は行いません。
+
+文字をScribus側でパス化し、特色とレイヤーを含むPDF 1.5を一時的に書き出してから変換します。画像の間引きと追加のJPEG圧縮は行いません。印刷向けの色設定を使用し、ICC色空間への書き出しは無効にします。裁ち落としとトンボを含めず、ページ寸法で書き出します。一時ファイルは保存先のサブフォルダーに作成し、処理終了時に削除します。この連携でも対応範囲は通常のPDF変換と同じです。未対応機能は標準でページ全体を300dpiのRGB画像にし、画像化したページと理由を完了画面とレポートに表示します。
+
+初回に選んだスクリプトはScribusの最近使ったスクリプトから再実行できます。連携ファイルはプロジェクト内の位置のまま使用してください。別のPython環境を使う場合は、Scribusを起動する環境の`PDF2AI_PYTHON`にPython実行ファイルのパスを指定します。`.venv`が見つからなければPATH上の`python3`、`python`も探します。画像化を禁止する場合は連携ファイル冒頭の`STRICT = True`、解像度を変更する場合は`RASTER_DPI`を72〜1200の範囲に設定してください。
+
+Scribusのスクリプトメニューが表示されない場合は、Scripterプラグインが有効な配布版を使用してください。ScribusのファイルメニューにAI形式を追加するC++プラグインとしてのインストールは不要です。
+
+API仕様：[Scribus PDFfile](https://gitlab.com/scribus/scribus/-/blob/master/doc/en/scripterapi-PDFfile.html)、[ScribusのダイアログAPI](https://gitlab.com/scribus/scribus/-/blob/master/doc/en/scripterapi-dialogs.html)。
