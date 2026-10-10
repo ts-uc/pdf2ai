@@ -43,7 +43,7 @@ def selected_pdf(path):
 def test_external_worker_page_mapping_and_report(tmp_path):
     source=tmp_path/'input.pdf';selected_pdf(source)
     base=tmp_path/'日本語 空白.ai'
-    request={'pdf':str(source),'pages':[2,4],'output':str(base),'document':'layout.sla'}
+    request={'pdf':str(source),'pages':[2,4],'output':str(base),'document':'layout.sla','write_report':True}
     config=tmp_path/'request.json';config.write_text(json.dumps(request),encoding='utf-8')
     result=subprocess.run([sys.executable,str(SCRIPT),'--worker',str(config)],capture_output=True,text=True,encoding='utf-8')
     assert result.returncode==0,result.stderr
@@ -67,7 +67,7 @@ def test_fallback_and_strict_failure_report(tmp_path):
     request={'pdf':str(source),'pages':[7],'output':str(tmp_path/'auto.ai'),'dpi':72}
     result=bridge.convert_export(request)['results'][0]
     assert result['rasterized'] and result['page']==7 and result['lost_features']
-    request.update(output=str(tmp_path/'strict.ai'),strict=True)
+    request.update(output=str(tmp_path/'strict.ai'),strict=True,write_report=True)
     result=bridge.convert_export(request)['results'][0]
     assert 'error' in result and not (tmp_path/'strict.ai').exists()
     assert (tmp_path/'strict.report.json').exists()
@@ -109,3 +109,71 @@ def test_outlined_glyph_form_with_reversed_bbox(tmp_path):
     with pikepdf.open(source) as pdf:
         drawing=read_drawing(pdf.pages[0]);commands=drawing.paths[0].state.clips[0].paths[0].commands
         assert commands[0][1]==(0,10) and commands[2][1]==(80,80)
+
+
+def test_worker_default_has_no_log_and_keeps_existing_log(tmp_path):
+    source=tmp_path/'input.pdf'
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Contents=pdf.make_stream(b'10 10 30 30 re f');pdf.save(source)
+    base=tmp_path/'result.ai';log=base.with_suffix('.report.json')
+    log.write_bytes(b'previous log')
+    config=tmp_path/'request.json'
+    config.write_text(json.dumps({'pdf':str(source),'pages':[1],'output':str(base)}))
+    result=subprocess.run([sys.executable,str(SCRIPT),'--worker',str(config)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    summary=json.loads(result.stdout)
+    assert len(summary['results'])==1 and not summary['results'][0]['rasterized']
+    assert base.exists() and log.read_bytes()==b'previous log'
+    base.unlink();log.unlink()
+    result=subprocess.run([sys.executable,str(SCRIPT),'--worker',str(config)],capture_output=True,text=True)
+    assert result.returncode==0 and base.exists() and not log.exists()
+
+
+def test_optional_log_conflict_checked_before_conversion(tmp_path):
+    source=tmp_path/'input.pdf';selected_pdf(source)
+    log=tmp_path/'result.report.json';log.write_bytes(b'keep')
+    with pytest.raises(FileExistsError):
+        bridge.convert_export({'pdf':str(source),'pages':[2,4],'output':str(tmp_path/'result.ai'),'write_report':True})
+    assert not (tmp_path/'result_002.ai').exists() and log.read_bytes()==b'keep'
+
+
+def test_default_output_uses_original_document_directory(tmp_path,monkeypatch):
+    directory=tmp_path/'日本語 空白';directory.mkdir()
+    assert bridge.default_output(str(directory/'文書.sla'))==directory/'文書.ai'
+    assert bridge.default_output(str(directory/'文書.sla.gz'))==directory/'文書.ai'
+    monkeypatch.chdir(tmp_path)
+    assert bridge.default_output('')==tmp_path/'document.ai'
+
+
+@pytest.mark.parametrize('checked',[False,True])
+def test_checkbox_dialog_and_save_directory(tmp_path,checked):
+    pytest.importorskip('PySide6.QtWidgets')
+    code=r'''
+import importlib.util,json,sys
+from pathlib import Path
+from PySide6.QtWidgets import QApplication,QCheckBox,QLineEdit,QPushButton,QDialogButtonBox,QFileDialog
+spec=importlib.util.spec_from_file_location('bridge',sys.argv[1])
+bridge=importlib.util.module_from_spec(spec);spec.loader.exec_module(bridge)
+app=QApplication(['test'])
+document=Path(sys.argv[2])/'original.sla'
+dialog=bridge.build_export_dialog(str(document),4,2)
+checkbox=dialog.findChild(QCheckBox,'write_report')
+assert not checkbox.isChecked()
+expected=str(document.with_suffix('.ai'))
+assert dialog.findChild(QLineEdit,'output').text()==expected
+calls=[]
+def choose(parent,caption,initial,filter,**kwargs):
+    calls.append(initial)
+    return (expected,'')
+QFileDialog.getSaveFileName=choose
+next(b for b in dialog.findChildren(QPushButton) if b.text()=='参照…').click()
+assert calls==[expected]
+dialog.findChild(QLineEdit,'pages').setText('current')
+checkbox.setChecked(sys.argv[3]=='True')
+dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok).click()
+print(json.dumps(dialog.export_options))
+'''
+    env=bridge.child_environment();env['QT_QPA_PLATFORM']='offscreen'
+    result=subprocess.run([sys.executable,'-c',code,str(SCRIPT),str(tmp_path),str(checked)],env=env,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    assert json.loads(result.stdout)=={'pages':[2],'output':str(tmp_path/'original.ai'),'write_report':checked}

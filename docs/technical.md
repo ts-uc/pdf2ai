@@ -15,23 +15,26 @@ Scribus連携の詳細設定、変換機能と制限、ファイル構造、検�
 ```sh
 python -m venv .venv
 # macOS / Linux
-.venv/bin/python -m pip install .
+.venv/bin/python -m pip install ".[scribus]"
 # Windows
-.venv\Scripts\python.exe -m pip install .
+.venv\Scripts\python.exe -m pip install ".[scribus]"
 ```
 
 1. Scribusで書き出す文書を開きます。未保存の編集内容も対象です。
 2. **スクリプト → スクリプトを実行**から`integrations/scribus/export_ai.py`を選びます。
 3. 対象ページを入力します。`all`は全ページ、`current`は現在のページ、`1,3-5`は指定ページです。
-4. 保存先とAIファイル名を選びます。
+4. 保存先とAIファイル名を選びます。初期の保存先は元の文書があるフォルダーです。未保存の文書は現在の作業フォルダーを使います。
+5. 必要な場合だけ「JSONログを出力する」にチェックを入れ、「書き出し」を押します。チェックの初期値はオフです。
 
-1ページなら指定した名前で保存し、複数ページなら`design_001.ai`、`design_003.ai`のように元のページ番号を付けます。結果は同じフォルダーの`design.report.json`に保存します。既存のAIまたはレポートがある場合は上書きを確認します。元のSLAファイルの保存や編集内容の変更は行いません。
+1ページなら指定した名前で保存し、複数ページなら`design_001.ai`、`design_003.ai`のように元のページ番号を付けます。チェックを入れた場合だけ、結果を同じフォルダーの`design.report.json`に保存します。チェックなしでは既存のJSONログを変更せず、ログの存在による上書き確認も行いません。既存のAI、または出力を有効にしたレポートがある場合は上書きを確認します。元のSLAファイルの保存や編集内容の変更は行いません。
 
 文字をScribus側でパス化し、特色とレイヤーを含むPDF 1.5を一時的に書き出してから変換します。画像の間引きと追加のJPEG圧縮は行いません。印刷向けの色設定を使用し、ICC色空間への書き出しは無効にします。裁ち落としとトンボを含めず、ページ寸法で書き出します。一時ファイルは保存先のサブフォルダーに作成し、処理終了時に削除します。この連携でも対応範囲は通常のPDF変換と同じです。未対応機能は標準でページ全体を300dpiのRGB画像にし、画像化したページと理由を完了画面とレポートに表示します。
 
 初回に選んだスクリプトはScribusの最近使ったスクリプトから再実行できます。連携ファイルはプロジェクト内の位置のまま使用してください。別のPython環境を使う場合は、Scribusを起動する環境の`PDF2AI_PYTHON`にPython実行ファイルのパスを指定します。`.venv`が見つからなければPATH上の`python3`、`python`も探します。画像化を禁止する場合は連携ファイル冒頭の`STRICT = True`、解像度を変更する場合は`RASTER_DPI`を72〜1200の範囲に設定してください。
 
 Scribusのスクリプトメニューが表示されない場合は、Scripterプラグインが有効な配布版を使用してください。ScribusのファイルメニューにAI形式を追加するC++プラグインとしてのインストールは不要です。
+
+設定画面は外部PythonのPySide6（QtWidgets）を使用します。`pip install ".[scribus]"`で必要なパッケージをインストールできます。Scribus内のPythonには追加しません。画面のキャンセルではPDF・AI・ログを作成しません。ログの有無にかかわらず、完了画面に成功数・エラー・画像化したページを表示します。
 
 API仕様：[Scribus PDFfile](https://gitlab.com/scribus/scribus/-/blob/master/doc/en/scripterapi-PDFfile.html)、[ScribusのダイアログAPI](https://gitlab.com/scribus/scribus/-/blob/master/doc/en/scripterapi-dialogs.html)。
 
@@ -177,13 +180,13 @@ pdf2ai sample/conversion_fallback.pdf --page 1 -o output/fallback.ai
 これらのPDFで描画機能を検証できます。入力パス、破損PDF、上書き防止、DPIの不正値、メモリ上限などのエラー処理には別途プログラムのテストが必要です。
 
 ```sh
-python -m pip install '.[test]'
+python -m pip install '.[test,scribus]'
 python -m pytest -q
 # 統合サンプルを再生成し、全ページを検証
 python tools/make_conversion_suite.py --verify
 ```
 
-自動テスト85件は、変換元とAIのPDF表示の画素一致、統合サンプルの全14ページ、特色濃度、座標変換、未対応PDFの拒否、上書き防止、編集ストリームの圧縮・展開を検証します。
+自動テストは、変換元とAIのPDF表示の画素一致、統合サンプルの全14ページ、特色濃度、座標変換、未対応PDFの拒否、上書き防止、編集ストリームの圧縮・展開を検証します。
 
 Python不要のGUI実行ファイルを配る場合は、**配布する各OS上で**ビルドしてください。
 

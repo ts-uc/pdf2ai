@@ -14,14 +14,14 @@ Install **Scribus 1.6 or later with Scripter enabled** and **Python 3.10 or late
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install .
+.\.venv\Scripts\python.exe -m pip install ".[scribus]"
 ```
 
 **macOS ・ GNU/Linux**
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install .
+.venv/bin/python -m pip install ".[scribus]"
 ```
 
 Keep `integrations/scribus/export_ai.py` in its current location. The script uses the project's `.venv`; no additional packages are needed inside Scribus's Python.
@@ -33,19 +33,20 @@ Keep `integrations/scribus/export_ai.py` in its current location. The script use
 1. Open your document in Scribus. / Scribus で文書を開きます。
 2. Choose **Script → Execute Script** and select [`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py). / **スクリプト → スクリプトを実行**から同ファイルを選びます。
 3. Enter `all`, `current`, or a page selection such as `1,3-5`. / `all`（全ページ）、`current`（現在のページ）、`1,3-5`（指定ページ）のいずれかを入力します。
-4. Choose the output folder and AI filename. / 保存先と AI ファイル名を指定します。
+4. Choose the output folder and AI filename. The document folder is selected by default. / 保存先と AI ファイル名を指定します。初期の保存先は元の文書があるフォルダーです。
+5. Check **JSONログを出力する** (Write JSON log) if needed; it is off by default. Click **書き出し** (Export). / 必要な場合だけ**JSONログを出力する**にチェックし（初期値はオフ）、**書き出し**を押します。
 
-Each page becomes a separate AI file. Multiple pages use the original page numbers, such as `design_001.ai`. A `design.report.json` file records the results. Existing outputs require overwrite confirmation. You can run the script again from Scribus's recent scripts.
+Each page becomes a separate AI file. Multiple pages use the original page numbers, such as `design_001.ai`. A `design.report.json` file is saved only when the JSON log checkbox is enabled. Existing outputs require overwrite confirmation. You can run the script again from Scribus's recent scripts.
 
-1 ページにつき 1 つの AI ファイルを出力します。複数ページは`design_001.ai`のように元のページ番号を付け、結果を`design.report.json`に保存します。既存ファイルがある場合は上書きを確認します。次回からは Scribus の最近使ったスクリプトから実行できます。
+1 ページにつき 1 つの AI ファイルを出力します。複数ページは`design_001.ai`のように元のページ番号を付け、チェックを入れた場合だけ結果を`design.report.json`に保存します。既存ファイルがある場合は上書きを確認します。次回からは Scribus の最近使ったスクリプトから実行できます。
 
 For DIC colors, mark them as **spot colors** in Scribus. Names such as `DIC 1` and `DIC 4` automatically map to the supplied Lab swatches `DIC 1s` and `DIC 4s*`.
 
 DIC 色は Scribus で**特色**として登録してください。`DIC 1`や`DIC 4`も、同梱の Lab スウォッチ`DIC 1s`や`DIC 4s*`に自動で割り当てます。
 
-**Experimental:** text is outlined, and unsupported features cause the entire page to be rasterized. Check the completion message, report, and output before submitting artwork.
+**Experimental:** text is outlined, and unsupported features cause the entire page to be rasterized. Check the completion message, output, and any requested report before submitting artwork.
 
-**実験的なツールです。** 文字はパス化し、未対応機能があるページはページ全体を画像化します。入稿前に完了メッセージ・レポート・出力内容を確認してください。
+**実験的なツールです。** 文字はパス化し、未対応機能があるページはページ全体を画像化します。入稿前に完了メッセージ・出力内容を確認してください。ログを出力した場合はレポートも確認してください。
 
 ## Direct PDF conversion / スクリプトから直接変換
 
