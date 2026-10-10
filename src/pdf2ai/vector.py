@@ -309,9 +309,11 @@ def _calculator(function, tint: float) -> tuple[float, ...]:
 
 
 def read_spot(space) -> Spot:
-    from .dic import dic_color
+    from .dic import dic_color, dic_name
     name = str(space[1])[1:]
     reference = dic_color(name)
+    if reference is not None:
+        name = dic_name(name)
     alternate = space[2]
     if isinstance(alternate,pikepdf.Array) and str(alternate[0]) == '/ICCBased':
         profile = alternate[1]

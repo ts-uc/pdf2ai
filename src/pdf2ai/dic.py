@@ -9,7 +9,22 @@ def _colors():
     return json.loads(files('pdf2ai').joinpath('data/dic_lab.json').read_text(encoding='utf-8'))
 
 
+@lru_cache(maxsize=1)
+def _aliases():
+    candidates = {}
+    for name in _colors():
+        base = name.rstrip('*').removesuffix('s')
+        candidates.setdefault(base, []).append(name)
+    # Use only unambiguous entries; exact book names always take precedence.
+    return {base: names[0] for base,names in candidates.items() if len(names)==1}
+
+
+def dic_name(name):
+    """末尾のs・*を省略したDIC名を、登録済みの正式名に解決する。"""
+    if name in _colors():
+        return name
+    return _aliases().get(name.rstrip('*').removesuffix('s'))
+
+
 def dic_color(name):
-    # Suffixes such as s and * distinguish actual book entries. Do not guess
-    # a color from its number or overwrite a similarly named custom spot.
-    return _colors().get(name)
+    return _colors().get(dic_name(name))
