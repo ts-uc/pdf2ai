@@ -43,6 +43,10 @@ To use DIC colors, register them as **spot colors** in Scribus. Names such as `D
 
 DIC 色を使う場合は、Scribus で**特色**として登録してください。`DIC 1` や `DIC 4` のような名前でも、対応する DIC の Lab スウォッチとして書き出せます。
 
+Import the supplied [DIC palette](integrations/scribus/palettes/DIC_Lab.xml) in Scribus’s color dialog to add all 1280 colors as spot colors.
+
+Scribus の色設定ダイアログから同梱の [DIC パレット](integrations/scribus/palettes/DIC_Lab.xml)をインポートすると、1280 色を特色として追加できます。
+
 **Check your output before submitting artwork.** This tool is experimental. Text becomes outlines, and pages containing unsupported features become images. Check the completion message and the resulting artwork.
 
 **入稿前に出力を確認してください。** 実験的なツールのため、文字はアウトラインになり、未対応機能を含むページは画像になります。完了メッセージと、書き出した内容を確認してください。
