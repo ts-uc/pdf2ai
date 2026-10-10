@@ -1,14 +1,14 @@
 # PDF2AI
 
-Export Scribus documents or convert PDFs to AI files without Illustrator. Runs on Windows, macOS, and GNU/Linux.
+Create Adobe Illustrator CC2020 files from Scribus documents or PDFs without Illustrator. Available for Windows, macOS, and GNU/Linux.
 
-Illustrator を使わず、Scribus 文書や PDF から CC2020 形式の AI ファイルを作成します。Windows・macOS・GNU/Linux に対応しています。
+Illustrator を使わずに、Scribus 文書や PDF を Adobe Illustrator CC2020 形式の AI ファイルに変換できます。Windows・macOS・GNU/Linux に対応しています。
 
-## Scribus: setup / セットアップ
+## Set up for Scribus / Scribus で使う準備
 
-Install **Scribus 1.6 or later with Scripter enabled** and **Python 3.10 or later**. Open a terminal in this project's root directory (the directory containing this README), then run the commands for your OS.
+You need **Scribus 1.6 or later with Scripter enabled** and **Python 3.10 or later**. Open a terminal in the folder containing this README, then run the commands below for your OS. This setup is needed only once.
 
-**Scripter が有効な Scribus 1.6 以降**と**Python 3.10 以降**を用意してください。この README があるプロジェクトのルートで、OS に応じたコマンドを実行します。
+**Scripter が有効な Scribus 1.6 以降**と**Python 3.10 以降**を用意してください。この README があるフォルダーでターミナルを開き、OS に応じたコマンドを実行します。初回のみ必要な準備です。
 
 **Windows (PowerShell)**
 
@@ -17,42 +17,41 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install ".[scribus]"
 ```
 
-**macOS ・ GNU/Linux**
+**macOS / GNU/Linux**
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install ".[scribus]"
 ```
 
-Keep `integrations/scribus/export_ai.py` in its current location. The script uses the project's `.venv`; no additional packages are needed inside Scribus's Python.
+Keep the downloaded project folder together; use the script from its original location.
 
-`integrations/scribus/export_ai.py`は現在の場所に置いたまま使ってください。プロジェクトの`.venv`を使うため、Scribus 内の Python への追加パッケージのインストールは不要です。
+ダウンロードしたフォルダーの構成を保ち、スクリプトは元の場所から使用してください。
 
-## Scribus: export / 書き出し
+## Export from Scribus / Scribus から AI を書き出す
 
-1. Open your document in Scribus. / Scribus で文書を開きます。
+1. Open the document you want to export in Scribus. / 書き出したい文書を Scribus で開きます。
 2. Choose **Script → Execute Script** and select [`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py). / **スクリプト → スクリプトを実行**から同ファイルを選びます。
-3. Enter `all`, `current`, or a page selection such as `1,3-5`. / `all`（全ページ）、`current`（現在のページ）、`1,3-5`（指定ページ）のいずれかを入力します。
-4. Choose the output folder and AI filename. The document folder is selected by default. / 保存先と AI ファイル名を指定します。初期の保存先は元の文書があるフォルダーです。
-5. Check **JSONログを出力する** (Write JSON log) if needed; it is off by default. Click **書き出し** (Export). / 必要な場合だけ**JSONログを出力する**にチェックし（初期値はオフ）、**書き出し**を押します。
+3. Choose the pages: `all` for all pages, `current` for the current page, or `1,3-5` for specific pages. / 対象ページを入力します。`all` は全ページ、`current` は現在のページ、`1,3-5` は指定ページです。
+4. Choose the output folder and filename, then click **書き出し** (Export). / 保存先とファイル名を指定し、**書き出し**を押します。
 
-Each page becomes a separate AI file. Multiple pages use the original page numbers, such as `design_001.ai`. A `design.report.json` file is saved only when the JSON log checkbox is enabled. Existing outputs require overwrite confirmation. You can run the script again from Scribus's recent scripts.
+Each page is saved as a separate AI file. For multiple pages, filenames include the original page number, such as `design_001.ai`. Next time, you can select the script from Scribus's recent scripts.
 
-1 ページにつき 1 つの AI ファイルを出力します。複数ページは`design_001.ai`のように元のページ番号を付け、チェックを入れた場合だけ結果を`design.report.json`に保存します。既存ファイルがある場合は上書きを確認します。次回からは Scribus の最近使ったスクリプトから実行できます。
+1 ページにつき 1 つの AI ファイルを保存します。複数ページの場合は、`design_001.ai` のように元のページ番号が付きます。次回からは Scribus の最近使ったスクリプトから実行できます。
 
-For DIC colors, mark them as **spot colors** in Scribus. Names such as `DIC 1` and `DIC 4` automatically map to the supplied Lab swatches `DIC 1s` and `DIC 4s*`.
+To use DIC colors, register them as **spot colors** in Scribus. Names such as `DIC 1` and `DIC 4` are also accepted and exported as the corresponding DIC Lab swatches.
 
-DIC 色は Scribus で**特色**として登録してください。`DIC 1`や`DIC 4`も、同梱の Lab スウォッチ`DIC 1s`や`DIC 4s*`に自動で割り当てます。
+DIC 色を使う場合は、Scribus で**特色**として登録してください。`DIC 1` や `DIC 4` のような名前でも、対応する DIC の Lab スウォッチとして書き出せます。
 
-**Experimental:** text is outlined, and unsupported features cause the entire page to be rasterized. Check the completion message, output, and any requested report before submitting artwork.
+**Check your output before submitting artwork.** This tool is experimental. Text becomes outlines, and pages containing unsupported features become images. Check the completion message and the resulting artwork.
 
-**実験的なツールです。** 文字はパス化し、未対応機能があるページはページ全体を画像化します。入稿前に完了メッセージ・出力内容を確認してください。ログを出力した場合はレポートも確認してください。
+**入稿前に出力を確認してください。** 実験的なツールのため、文字はアウトラインになり、未対応機能を含むページは画像になります。完了メッセージと、書き出した内容を確認してください。
 
-## Direct PDF conversion / スクリプトから直接変換
+## Convert an existing PDF / PDF を直接変換する
 
-After the setup above, run the launcher from the project root. Scribus is not required for this method.
+After setup, run the following command from the folder containing this README. Replace `input.pdf` with your PDF and `output.ai` with the desired output filename.
 
-上記のセットアップ後、プロジェクトのルートからランチャーを実行します。この方法では Scribus は不要です。
+セットアップ後、この README があるフォルダーで次のコマンドを実行します。`input.pdf` を変換したい PDF に、`output.ai` を保存したいファイル名に置き換えてください。
 
 **Windows (PowerShell)**
 
@@ -60,16 +59,12 @@ After the setup above, run the launcher from the project root. Scribus is not re
 .\.venv\Scripts\python.exe run_pdf2ai.py input.pdf -o output.ai
 ```
 
-**macOS ・ GNU/Linux**
+**macOS / GNU/Linux**
 
 ```sh
 .venv/bin/python run_pdf2ai.py input.pdf -o output.ai
 ```
 
-For multipage PDFs, add `--page 2` to select a page. Add `--gui` instead of the input/output arguments to launch the desktop interface (requires Tkinter).
+For a multipage PDF, add `--page 2` to convert page 2. See [the detailed guide](docs/technical.md) for other options, supported features, and troubleshooting.
 
-複数ページ PDF は`--page 2`などで対象ページを指定します。入出力の引数の代わりに`--gui`を指定すると、デスクトップ画面を起動します（Tkinter が必要です）。
-
-See [technical details](docs/technical.md) for advanced options, supported features, limitations, troubleshooting, testing, and packaging.
-
-詳細な設定、対応機能・制限、トラブル時の設定、検証・配布手順は[技術詳細](docs/technical.md)を参照してください。
+複数ページの PDF は、`--page 2` を追加すると 2 ページ目を変換できます。その他の使い方・対応機能・困ったときの設定は[詳細ガイド](docs/technical.md)を参照してください。
