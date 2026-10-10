@@ -20,5 +20,8 @@ pdf2ai-gui = "pdf2ai.gui:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+pdf2ai = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -77,11 +77,13 @@ pdf2ai-gui
 - 特色名、代替CMYK値、特色濃度、CMYKのオーバープリントモード1。
 - 塗りだけの図形に設定された線幅0。線幅0で実際に線を描くヘアラインは未対応です。
 
-特色は元PDFの色定義とCMYK代替値を使用します。
+通常の特色は元PDFの色定義とCMYK代替値を使用します。DIC特色は、同梱の1280色の色名と完全一致する場合、DICカラーブックのLab値を持つ特色スウォッチとしてAIの編集データに出力します。追加の設定は不要で、Scribus連携でも有効です。特色名・塗りと線の濃度を保持します。`DIC 1s`や`DIC 4s*`のような接尾辞も照合に必要です。登録されていない名前は元のCMYK特色として扱います。DIC名が失われたプロセスCMYKからは復元できないため、ScribusではDIC色を特色として登録してください。
+
+DIC特色のLab入力（D50、線形Type 2）と、Labを代替色に持つLab ICCプロファイル入力にも対応します。この場合は入力のLab値を保持します。JSONレポートの`spots`にはAI編集データの色空間と色値を記録します。AIのPDF表示部分は従来どおり元PDFを保持するため、元のCMYK表示とLabで編集・再保存した表示に差が出る場合があります。同梱データは`src/pdf2ai/data/dic_lab.json`にあり、Illustratorや外部のパレットファイルを実行時に必要としません。
 
 正の指数を持つ非線形Type 2グラデーション関数は、最大256個の編集可能な色の停止点で近似します。各成分の補間誤差の目標は0.25/255以内です。近似が上限を超える場合は画像化します。
 
-編集データとして未対応：文字として編集可能なテキスト、複雑なフォント/CMap・縦書き・Type3、中心が異なる円形・メッシュグラデーション、グラデーションの線、非等方・せん断のグラデーション変換、タイルパターン、図形のソフトマスク、分離・ノックアウトの透明グループ、Lab/ICCの色空間、DeviceN、非等方変換の線、ヘアライン、注釈、複雑なレイヤー条件（OCMD・別レイヤー条件の入れ子・排他切替）、特殊なDecode/Matte、インライン画像など。
+編集データとして未対応：文字として編集可能なテキスト、複雑なフォント/CMap・縦書き・Type3、中心が異なる円形・メッシュグラデーション、グラデーションの線、非等方・せん断のグラデーション変換、タイルパターン、図形のソフトマスク、分離・ノックアウトの透明グループ、上記DIC特色以外のLab/ICCの色空間、DeviceN、非等方変換の線、ヘアライン、注釈、複雑なレイヤー条件（OCMD・別レイヤー条件の入れ子・排他切替）、特殊なDecode/Matte、インライン画像など。
 
 これらを検出すると、標準では**選択したページ全体**をPyMuPDFで描画し、透過を保持したRGB画像としてAIの編集部分に埋め込みます。部分的な画像化ではありません。既定は300dpiで、`--raster-dpi`は72～1200を指定できます。画像化したページの文字・パス・特色分版・レイヤー構造は編集データでは失われます。元PDFの表示データは保持します。CLIとGUIに画像化の理由を表示し、JSONレポートに`conversion_mode`、`rasterized`、`fallback_reason`、`raster_dpi`、`lost_features`を記録します。`--strict`またはGUIのチェックで画像化を禁止できます。
 
@@ -139,13 +141,13 @@ python -m pytest -q
 python tools/make_conversion_suite.py --verify
 ```
 
-自動テスト75件は、変換元とAIのPDF表示の画素一致、統合サンプルの全14ページ、特色濃度、座標変換、未対応PDFの拒否、上書き防止、編集ストリームの圧縮・展開を検証します。
+自動テスト81件は、変換元とAIのPDF表示の画素一致、統合サンプルの全14ページ、特色濃度、座標変換、未対応PDFの拒否、上書き防止、編集ストリームの圧縮・展開を検証します。
 
 Python不要のGUI実行ファイルを配る場合は、**配布する各OS上で**ビルドしてください。
 
 ```sh
 python -m pip install '.[build]'
-python -m PyInstaller --clean --noconfirm --onefile --windowed --name pdf2ai-gui --paths src --collect-all pikepdf --collect-all pymupdf --collect-all fontTools --collect-all zstandard tools/gui_entry.py
+python -m PyInstaller --clean --noconfirm --onefile --windowed --name pdf2ai-gui --paths src --collect-data pdf2ai --collect-all pikepdf --collect-all pymupdf --collect-all fontTools --collect-all zstandard tools/gui_entry.py
 ```
 
 このビルドにはPython 3.10～3.13を推奨します。Python 3.14では標準Zstandardを使うため、`--collect-all zstandard`は不要です。macOSの署名・公証やWindowsの署名は含んでいません。

@@ -64,6 +64,7 @@ def point(matrix: Matrix, x: float, y: float) -> tuple[float, float]:
 class Spot:
     name: str
     cmyk: tuple[float, ...]
+    lab: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -308,8 +309,21 @@ def _calculator(function, tint: float) -> tuple[float, ...]:
 
 
 def read_spot(space) -> Spot:
-    if str(space[0]) != "/Separation" or str(space[2]) != "/DeviceCMYK":
-        raise ConversionError("Only Separation spots with DeviceCMYK alternates are supported")
+    from .dic import dic_color
+    name = str(space[1])[1:]
+    reference = dic_color(name)
+    alternate = space[2]
+    if isinstance(alternate,pikepdf.Array) and str(alternate[0]) == '/ICCBased':
+        profile = alternate[1]
+        if int(profile.get('/N',0)) == 3 and profile.read_bytes()[16:20] == b'Lab ':
+            alternate = profile.get('/Alternate')
+    is_lab = isinstance(alternate,pikepdf.Array) and str(alternate[0]) == '/Lab'
+    if str(space[0]) != "/Separation" or not (str(alternate) == '/DeviceCMYK' or is_lab and reference):
+        raise ConversionError("Only CMYK or registered DIC Lab Separation spots are supported")
+    if is_lab:
+        white = tuple(float(v) for v in alternate[1].get('/WhitePoint',[]))
+        if len(white)!=3 or any(abs(a-b)>0.001 for a,b in zip(white,(0.964203,1,0.824905))):
+            raise ConversionError("DIC Lab spots require D50 white point")
     fn = space[3]
     kind = int(fn.get("/FunctionType", -1))
     if list(fn.get("/Domain", [])) != [0, 1]:
@@ -319,9 +333,9 @@ def read_spot(space) -> Spot:
             raise ConversionError("Nonlinear spot tint functions are unsupported")
         zero = tuple(float(v) for v in fn.get("/C0", []))
         full = tuple(float(v) for v in fn.get("/C1", []))
-        if zero != (0, 0, 0, 0) or len(full) != 4:
-            raise ConversionError("Spot tint must interpolate from CMYK paper white")
-    elif kind == 4 and isinstance(fn, pikepdf.Stream):
+        if zero != ((100,0,0) if is_lab else (0,0,0,0)) or len(full) != (3 if is_lab else 4):
+            raise ConversionError("Spot tint must interpolate from paper white")
+    elif kind == 4 and not is_lab and isinstance(fn, pikepdf.Stream):
         full = _calculator(fn, 1)
         # Only multiplicative tint procedures are accepted. Arbitrary approximations
         # would cause the private AI colors to disagree with the PDF representation.
@@ -333,9 +347,10 @@ def read_spot(space) -> Spot:
             raise ConversionError("Only linear Scribus type-4 spot functions are supported")
     else:
         raise ConversionError(f"Unsupported spot tint function type: {kind}")
-    if not all(math.isfinite(v) and 0 <= v <= 1 for v in full):
-        raise ConversionError("Invalid CMYK spot values")
-    return Spot(str(space[1])[1:], full)
+    bounds = ((0,100),(-128,127),(-128,127)) if is_lab else ((0,1),)*4
+    if not all(math.isfinite(v) and lo <= v <= hi for v,(lo,hi) in zip(full,bounds)):
+        raise ConversionError("Invalid spot values")
+    return Spot(name, tuple(reference['cmyk']), full if is_lab else tuple(reference['lab'])) if reference else Spot(name, full)
 
 
 def read_drawing(page, *, root=None) -> Drawing:

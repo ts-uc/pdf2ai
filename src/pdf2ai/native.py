@@ -33,6 +33,8 @@ def color_command(color: Color, stroke: bool = False) -> str:
               "Gray": "G" if stroke else "g", "Spot": "X" if stroke else "x"}[color.model]
     if color.spot:
         # Illustrator's custom-color gray is 0 for solid ink, 1 for paper white.
+        if color.spot.lab is not None:
+            return " ".join(num(v) for v in (*color.spot.cmyk,*color.spot.lab)) + " " + ps_string(color.spot.name) + " " + num(1-color.values[0]) + " 2 " + ("XX" if stroke else "Xx")
         return " ".join(num(v) for v in color.spot.cmyk) + " " + ps_string(color.spot.name) + " " + num(1-color.values[0]) + " " + suffix
     if color.model == 'RGB':
         r,g,b = color.values
@@ -118,7 +120,7 @@ def make_private(drawing: Drawing, title: str) -> tuple[bytes, bytes]:
     body = ["%%BeginProlog", "%%EndProlog", "%%BeginSetup",
             "%AI5_BeginPalette", "0 0 Pb"]
     for spot in drawing.spots:
-        body += [" ".join(num(v) for v in spot.cmyk) + " " + ps_string(spot.name) + " 0 x",
+        body += [color_command(Color('Spot',(1,),spot)),
                  ps_string(spot.name), "Pc"]
     body += ["PB", "%AI5_EndPalette", f"{len(gradients)} Bn"]
     for gradient in gradients:
@@ -339,5 +341,5 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
             "images":len(drawing.images),"image_soft_masks":sum(i.alpha is not None for i in drawing.images),
             "color_model":drawing.color_model,
             "clipping_paths":sum(len(c.paths) for item in native_items(drawing) for c in item.state.clips),
-            "spots":[{"name":s.name,"alternate_space":"CMYK","values":list(s.cmyk)} for s in drawing.spots],
+            "spots":[{"name":s.name,"alternate_space":"Lab" if s.lab is not None else "CMYK","values":list(s.lab if s.lab is not None else s.cmyk)} for s in drawing.spots],
             "pdf_operators":drawing.operators,"private_blocks":len(chunks)}

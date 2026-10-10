@@ -28,7 +28,7 @@
     {
       "panel": 6,
       "title": "Spot tints and overprint",
-      "features": "Separation Type2/Type4; tint 25/50/75/100%; CMYK overprint OPM1"
+      "features": "Type2/Type4; tints; OPM1; DIC CMYK to Lab book / Lab input"
     },
     {
       "panel": 7,

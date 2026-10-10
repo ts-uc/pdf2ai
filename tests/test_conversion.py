@@ -85,7 +85,7 @@ def test_unified_samples(tmp_path,kind,page):
     result=convert(source,out,page_number=page,raster_dpi=144)
     assert result['rasterized']==(kind=='fallback')
     if kind=='native':
-        assert result['gradients']==10 and result['images']==17 and len(result['spots'])==2
+        assert result['gradients']==10 and result['images']==17 and len(result['spots'])==4
         assert result['outlined_glyphs']>1000
     with pikepdf.open(out) as generated:
         assert read_private(generated)

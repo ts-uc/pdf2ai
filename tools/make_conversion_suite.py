@@ -175,8 +175,12 @@ def spot_scene():
     pdf=document('');calc=pdf.make_stream(b'{ dup 0.2 mul exch dup 0.8 mul exch dup 0.4 mul exch 0 mul }')
     calc.update(pikepdf.Dictionary(FunctionType=4,Domain=[0,1],Range=[0,1]*4))
     s4=pikepdf.Array([pikepdf.Name.Separation,pikepdf.Name('/Suite Spot Type4'),pikepdf.Name.DeviceCMYK,calc])
-    pdf.pages[0].obj.Resources=pikepdf.Dictionary(ColorSpace=pikepdf.Dictionary(S2=s2,S4=s4),ExtGState=pikepdf.Dictionary(OP=pikepdf.Dictionary(OP=True,op=True,OPM=1)))
+    dic=pikepdf.Array([pikepdf.Name.Separation,pikepdf.Name('/DIC 1s'),pikepdf.Name.DeviceCMYK,function([0,0,0,0],[.03,.25,.27,0])])
+    lab=pikepdf.Array([pikepdf.Name.Lab,pikepdf.Dictionary(WhitePoint=[.964203,1,.824905],Range=[-128,127,-128,127])])
+    dic_lab=pikepdf.Array([pikepdf.Name.Separation,pikepdf.Name('/DIC 2s'),lab,function([100,0,0],[85.4902,14,11])])
+    pdf.pages[0].obj.Resources=pikepdf.Dictionary(ColorSpace=pikepdf.Dictionary(S2=s2,S4=s4,DIC=dic,DL=dic_lab),ExtGState=pikepdf.Dictionary(OP=pikepdf.Dictionary(OP=True,op=True,OPM=1)))
     pdf.pages[0].obj.Contents=pdf.make_stream(b'/S2 cs 1 scn 20 100 70 60 re f 0.5 scn 100 100 70 60 re f 0.25 scn 180 100 70 60 re f /S4 cs 0.75 scn 280 100 70 60 re f q /OP gs /S2 CS 1 SCN 4 w 30 30 m 350 30 l S 0.1 0.7 0.2 0 k 30 40 150 40 re f Q')
+    pdf.pages[0].obj.Contents=pikepdf.Array([pdf.pages[0].obj.Contents,pdf.make_stream(b'/DIC cs 0.25 scn 195 40 65 40 re f /DIC CS 0.5 SCN 2 w 195 40 65 40 re S /DL cs 1 scn 280 40 65 40 re f')])
     return pdf
 
 
@@ -232,7 +236,7 @@ def build_native(path,temporary):
     add('ExtGState line style',document('/Line gs 30 50 m 130 150 l 240 50 l S',pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(Line=pikepdf.Dictionary(LW=5,LC=2,LJ=1,ML=8,D=[[8,4],2])))), 'LW LC LJ ML D via gs')
     add('Transforms and graphics state',document('q 1.5 0 0 1.5 30 20 cm 3 w [5 2] 1 d 0 0 80 80 re S Q q 0.866 0.5 -0.5 0.866 230 50 cm 0 0.7 0.3 rg 0 0 100 90 re f Q q 1 0.2 0.4 0.8 260 30 cm 0.7 0 0.4 rg 0 0 90 90 re f Q'), 'q/Q; translation, uniform scale, rotation; shear/nonuniform fills')
     add('RGB, CMYK and gray',document('1 0 0 rg 20 40 60 100 re f 0 1 0 rg 90 40 60 100 re f 0 0 1 rg 160 40 60 100 re f 0 1 0 0 k 230 40 60 100 re f 0.5 g 300 40 60 100 re f'), 'DeviceRGB / DeviceCMYK / DeviceGray')
-    add('Spot tints and overprint',spot_scene(),'Separation Type2/Type4; tint 25/50/75/100%; CMYK overprint OPM1')
+    add('Spot tints and overprint',spot_scene(),'Type2/Type4; tints; OPM1; DIC CMYK to Lab book / Lab input')
     feature_pdf(temporary/'features.pdf');add('Forms, clipping, radial, all 16 blends',pikepdf.open(temporary/'features.pdf'),'nested resources, Form BBox/matrix; W*; fill/stroke opacity')
     for model in ['RGB','CMYK','Gray']:
         for radial in [False,True]:add(f'{model} '+('radial' if radial else 'axial')+' gradient',gradient_scene(model,radial), 'direct sh; extended ends; Type2 function')
@@ -337,8 +341,10 @@ def main():
                     expected='raster-fallback' if name=='fallback' else 'vector'
                     if report['conversion_mode']!=expected:raise AssertionError(f'{name} page {i+1}: {report}')
                     if name=='native':
-                        if report['gradients']!=10 or report['images']!=17 or len(report['spots'])!=2 or report['outlined_glyphs']<1000:
+                        if report['gradients']!=10 or report['images']!=17 or len(report['spots'])!=4 or report['outlined_glyphs']<1000:
                             raise AssertionError(f'Missing native feature: {report}')
+                        if sum(s['alternate_space']=='Lab' for s in report['spots'])!=2:
+                            raise AssertionError('Missing DIC Lab swatches')
                         layers=report['layers']
                         if not any(l['locked'] and not l['printable'] for l in layers) or not any(not l['visible'] for l in layers):
                             raise AssertionError('Missing layer attributes')
