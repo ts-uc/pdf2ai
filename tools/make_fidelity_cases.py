@@ -13,6 +13,22 @@ from make_conversion_suite import document, gradient_scene, image_scene
 
 
 def cases():
+    for bits in (1,2,4,8):
+        pdf=image_scene('indexed');image=pdf.pages[0].Resources.XObject.Im
+        row=bytearray((8*bits+7)//8)
+        for x in range(8):row[x*bits//8]|=(x%2)<<(8-bits-x*bits%8)
+        image.write(bytes(row)*4);image.BitsPerComponent=bits;image.Mask=[1,1]
+        yield f'image-indexed-key-{bits}bit',pdf
+    for name,matrix in (('shear','1.5 0.2 0.5 0.7 20 20'),('reflection','-1.5 0.2 0.5 0.7 350 20')):
+        for join in (0,1,2):
+            for cap in (0,1,2):
+                yield f'dash-frame-{name}-j{join}-c{cap}',document(f'q {matrix} cm 0.2 0.4 0.8 RG 8 w {join} j {cap} J [37 19] 11 d 20 20 160 90 re S Q')
+            yield f'dash-polyline-{name}-j{join}',document(f'q {matrix} cm 0.2 0.4 0.8 RG 8 w {join} j 1 J [57 13] 4 d 20 20 m 100 110 l 180 20 l S Q')
+        for phase in (0,7):
+            yield f'dash-dotted-frame-{name}-{phase}',document(f'q {matrix} cm 0.2 0.4 0.8 RG 8 w 1 J [0 15] {phase} d 20 20 160 90 re S Q')
+            yield f'dash-seam-{name}-{phase}',document(f'q {matrix} cm 0.2 0.4 0.8 RG 8 w 0 j 2 J [70 31] {phase} d 20 20 80 50 re S Q')
+        yield f'dash-full-frame-{name}',document(f'q {matrix} cm 0.2 0.4 0.8 RG 8 w 0 j 1 J [1000 10] 0 d 20 20 160 90 re S Q')
+    yield 'dash-polyline-alpha',document('q 1.5 0.2 0.5 0.7 20 20 cm /A gs 0.2 0.4 0.8 RG 8 w 1 j 1 J [57 13] 4 d 20 20 m 100 110 l 180 20 l S Q',pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=.4))))
     for name,matrix in (('shear','1.5 0.2 0.5 0.7 20 20'),('reflection','-1.5 0.2 0.5 0.7 350 20')):
         for join in (0,1,2):
             for cap in (0,1,2):

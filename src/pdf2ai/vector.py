@@ -203,9 +203,55 @@ def stroke_circle(center,r,matrix):
     return Subpath(commands,True)
 
 
+def outline_dashed_polyline(pts,closed,state):
+    """Cut dashes by total user-space arc length, retaining joins inside each dash."""
+    from bisect import bisect_left, bisect_right
+    vertices=pts+([pts[0]] if closed else [])
+    lengths=[0.0]
+    for first,last in zip(vertices,vertices[1:]):
+        lengths.append(lengths[-1]+math.dist(first,last))
+    total=lengths[-1]
+    if total<1e-12:raise ConversionError('Degenerate nonuniform dashed polyline')
+    pattern=state.dash*2 if len(state.dash)%2 else state.dash
+    phase=state.phase%sum(pattern);index=0
+    while phase>0 and phase>=pattern[index]:
+        phase-=pattern[index];index=(index+1)%len(pattern)
+    remaining=pattern[index]-phase;position=0;intervals=[];steps=0
+    while position<total or (position==total and remaining==0):
+        end=min(total,position+remaining)
+        if remaining>0 and end<=position:raise ConversionError('Dash interval is below coordinate precision')
+        if index%2==0:intervals.append((position,end))
+        if end<position+remaining:break
+        position=end;index=(index+1)%len(pattern);remaining=pattern[index];steps+=1
+        if steps>20000:raise ConversionError('Outlined dash pattern exceeds complexity limit')
+    def location(distance):
+        if distance>=total:return vertices[-1]
+        i=min(bisect_right(lengths,distance)-1,len(vertices)-2)
+        fraction=(distance-lengths[i])/(lengths[i+1]-lengths[i])
+        first,last=vertices[i:i+2]
+        return first[0]+fraction*(last[0]-first[0]),first[1]+fraction*(last[1]-first[1])
+    fragments=[];dots=[]
+    for first,last in intervals:
+        if first==last:
+            dots.append(location(first));continue
+        interior=vertices[bisect_right(lengths,first):bisect_left(lengths,last)]
+        fragments.append([location(first),*interior,location(last)])
+    # A dash that spans the closepath seam is one stroke with a join there.
+    whole=closed and len(intervals)==1 and intervals[0]==(0,total)
+    if closed and len(fragments)>1 and intervals[0][0]==0 and intervals[-1][1]==total and intervals[0][1]>0 and intervals[-1][0]<total:
+        fragments=[fragments[-1]+fragments[0][1:],*fragments[1:-1]]
+    solid=copy(state);solid.dash=();solid.phase=0;result=[]
+    for fragment in fragments:
+        path=Subpath([('m' if i==0 else 'L',point(state.matrix,*v)) for i,v in enumerate(fragment)],whole)
+        result.extend(outline_polyline_stroke(path,solid))
+        if len(result)>60000:raise ConversionError('Outlined dash pattern exceeds complexity limit')
+    result.extend(stroke_circle(center,state.width/2,state.matrix) for center in dots)
+    if len(result)>60000:raise ConversionError('Outlined dash pattern exceeds complexity limit')
+    return result
+
+
 def outline_polyline_stroke(path,state):
     """Union of stroke bands, endpoint caps, and the PDF join regions."""
-    if state.dash:raise ConversionError('Nonuniform dashed polylines are unsupported')
     if not path.commands or path.commands[0][0]!='m' or any(op!='L' for op,_ in path.commands[1:]):
         raise ConversionError('Nonuniform curved strokes are unsupported')
     a,b,c,d,e,f=state.matrix;det=a*d-b*c
@@ -214,6 +260,7 @@ def outline_polyline_stroke(path,state):
     pts=[v for i,v in enumerate(pts) if i==0 or v!=pts[i-1]]
     if path.closed and len(pts)>1 and pts[-1]==pts[0]:pts.pop()
     if len(pts)<2:raise ConversionError('Degenerate nonuniform polyline')
+    if state.dash:return outline_dashed_polyline(pts,path.closed,state)
     segments=list(zip(pts,pts[1:]+([pts[0]] if path.closed else [])))
     directions=[];result=[];r=state.width/2
     def polygon(vertices):
@@ -416,6 +463,13 @@ def read_image(image, state: State) -> Raster:
         if decode is not None: image['/Decode'] = decode
     if hard_mask is not None:
         if alpha is not None: raise ConversionError("Combined hard and soft image masks are unsupported")
+        if isinstance(hard_mask,pikepdf.Array):
+            try:
+                values=tuple(map(float,hard_mask))
+            except (ValueError,TypeError,OverflowError) as exc:
+                raise ConversionError('Invalid color-key mask samples') from exc
+            if any(not math.isfinite(v) or v!=math.floor(v) for v in values):
+                raise ConversionError('Color-key mask samples must be integers')
         if isinstance(hard_mask,pikepdf.Stream):
             if not hard_mask.get('/ImageMask',False) or int(hard_mask.get('/BitsPerComponent',0))!=1 or (int(hard_mask.Width),int(hard_mask.Height))!=(width,height) or hard_mask.get('/Mask') is not None or hard_mask.get('/SMask') is not None:
                 raise ConversionError("Only matching one-bit image masks are supported")
@@ -424,7 +478,15 @@ def read_image(image, state: State) -> Raster:
             raw = hard_mask.read_bytes();stride = (width+7)//8
             if len(raw)!=stride*height: raise ConversionError("Invalid hard mask data")
             alpha = bytes((255 if ((raw[y*stride+x//8]>>(7-x%8))&1)==int(decode[0]) else 0) for y in range(height) for x in range(width))
-        elif isinstance(hard_mask,pikepdf.Array) and not indexed and bits==8:
+        elif isinstance(hard_mask,pikepdf.Array) and indexed:
+            limits=list(map(int,hard_mask));maximum=(1<<bits)-1
+            if len(limits)!=2 or not 0<=limits[0]<=limits[1]<=maximum:
+                raise ConversionError('Invalid Indexed color-key mask')
+            raw=image.read_bytes();stride=(width*bits+7)//8
+            if len(raw)!=stride*height:raise ConversionError('Invalid Indexed image sample length')
+            alpha=bytes(0 if limits[0]<=((raw[y*stride+x*bits//8]>>(8-bits-x*bits%8))&maximum)<=limits[1] else 255
+                        for y in range(height) for x in range(width))
+        elif isinstance(hard_mask,pikepdf.Array) and bits==8:
             channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
             limits = list(map(int,hard_mask))
             if len(limits)!=2*channels or any(not 0<=v<=255 for v in limits) or any(limits[i]>limits[i+1] for i in range(0,len(limits),2)):

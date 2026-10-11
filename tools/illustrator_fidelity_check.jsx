@@ -7,6 +7,14 @@
     var folder = new Folder(base + '/' + config.run);
     var out = new Folder(folder + '/illustrator'); if (!out.exists) out.create();
     var files = folder.getFiles('*.ai'), rows = ['Illustrator\t' + app.version];
+    if (config.cases) {
+        var selected=[];
+        for(var f=0;f<files.length;f++)
+            for(var c=0;c<config.cases.length;c++)
+                if(decodeURI(files[f].name)==config.cases[c]) {selected.push(files[f]);break;}
+        files=selected;
+        if(files.length!=config.cases.length) throw new Error('Missing or duplicate selected cases');
+    }
     var old = app.userInteractionLevel;
     try {
         app.userInteractionLevel = UserInteractionLevel.DONTDISPLAYALERTS;
@@ -33,6 +41,6 @@
             finally { if(d) d.close(SaveOptions.DONOTSAVECHANGES); }
         }
     } finally { app.userInteractionLevel=old; }
-    var report=new File(out+'/results.tsv'); report.encoding='UTF-8';report.open('w');report.write(rows.join('\n'));report.close();
+    var report=new File(out+(config.cases ? '/results-selected.tsv' : '/results.tsv')); report.encoding='UTF-8';report.open('w');report.write(rows.join('\n'));report.close();
     return rows.join('\n');
 }());

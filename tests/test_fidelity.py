@@ -193,7 +193,7 @@ def test_nonuniform_straight_strokes_preserve_edges_and_state(tmp_path,matrix,ca
     assert not convert(source,tmp_path/'stroke.ai',raster_fallback=False)['rasterized']
 
 
-@pytest.mark.parametrize('path',['[5 3] 0 d 0 0 m 30 0 l 30 30 l S','0 0 m 30 0 l h S','[0 3] 0 d 0 0 m 30 0 l S','0 0 m 30 0 30 30 0 30 c S'])
+@pytest.mark.parametrize('path',['0 0 m 30 0 l h S','[0 3] 0 d 0 0 m 30 0 l S','0 0 m 30 0 30 30 0 30 c S'])
 def test_complex_nonuniform_strokes_still_rejected(path):
     from pdf2ai.vector import ConversionError
     pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
@@ -267,11 +267,10 @@ def test_nonuniform_rectangle_frame_has_exact_ring(tmp_path,matrix,size,line_wid
 
 
 @pytest.mark.parametrize('style',['[3 2] 0 d'])
-def test_unsupported_nonuniform_rectangle_styles_are_rejected(style):
-    from pdf2ai.vector import ConversionError
+def test_nonuniform_dashed_rectangle_is_supported(style):
     pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
     page.Contents=pdf.make_stream(f'2 0 0 1 0 0 cm {style} 10 10 40 30 re S'.encode())
-    with pytest.raises(ConversionError):read_drawing(page)
+    assert read_drawing(page).outlined_strokes==1
 
 
 def test_nonuniform_rectangle_fill_and_stroke_keep_distinct_colors():
@@ -369,3 +368,69 @@ def test_rectangle_corner_styles_preserve_transparency(join,tmp_path):
     assert drawing.paths[0].state.fill_alpha==.4 and drawing.outlined_strokes==1
     source=tmp_path/'join.pdf';pdf.save(source)
     assert not convert(source,tmp_path/'join.ai',raster_fallback=False)['rasterized']
+
+
+@pytest.mark.parametrize('closed',[False,True])
+@pytest.mark.parametrize('cap',[0,1,2])
+@pytest.mark.parametrize('join',[0,1,2])
+def test_dash_crosses_corners_without_restarting_phase(tmp_path,closed,cap,join):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(200,100))
+    close='h' if closed else ''
+    page.Contents=pdf.make_stream(f'2 .3 .6 1 10 10 cm 4 w {cap} J {join} j [14 8] 0 d 0 0 m 10 0 l 10 10 l 20 10 l {close} S'.encode())
+    drawing=read_drawing(page);assert drawing.outlined_strokes==1
+    contours=drawing.paths[0].paths
+    # The first 14-unit dash must retain the corner at (10,0), so it has
+    # two segment bands and a join; a segment-by-segment reset loses this join.
+    assert len(contours)>=3
+    source=tmp_path/'corner.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'corner.ai',raster_fallback=False)['rasterized']
+
+
+def test_dashed_closed_frame_entirely_on_has_no_endpoint_caps():
+    from pdf2ai.vector import outline_straight_strokes
+    matrix=(2,0,0,1,0,0);state=State(matrix=matrix,width=2,cap=1,dash=(1000,10))
+    path=Subpath([('m',(0,0)),('L',(20,0)),('L',(20,10)),('L',(0,10))],True)
+    shapes=outline_straight_strokes([path],state)
+    # Four bands and four miter joins, with no round endpoint circles.
+    assert len(shapes)==8 and all(len(p.commands)==4 for p in shapes)
+
+
+def test_dotted_closed_polygon_keeps_input_dash_state():
+    from pdf2ai.vector import outline_straight_strokes
+    matrix=(2,0,0,1,0,0);state=State(matrix=matrix,width=2,cap=1,dash=(0,5),phase=2)
+    path=Subpath([('m',(0,0)),('L',(20,0)),('L',(20,10)),('L',(0,10))],True)
+    shapes=outline_straight_strokes([path],state)
+    assert len(shapes)==8 and all(len(p.commands)==5 for p in shapes)
+    assert state.dash==(0,5) and state.phase==2
+
+
+
+
+@pytest.mark.parametrize('bits,raw,width,mask,expected',[
+    (1,b'\x50',4,[1,1],b'\xff\0\xff\0'),
+    (2,b'\x18',3,[1,2],b'\xff\0\0'),
+    (4,b'\x01\x20',3,[1,2],b'\xff\0\0'),
+    (8,b'\0\1\2',3,[1,2],b'\xff\0\0'),
+])
+def test_indexed_color_key_mask_uses_indices_and_row_padding(bits,raw,width,mask,expected,tmp_path):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    # Palette entries 0 and 1 intentionally have the same RGB color. Transparency
+    # must follow sample indices rather than comparing expanded RGB channels.
+    palette=b'\xff\0\0\xff\0\0\0\0\xff'
+    space=pikepdf.Array([pikepdf.Name.Indexed,pikepdf.Name.DeviceRGB,2,pikepdf.String(palette)])
+    image=pdf.make_stream(raw*2);image.update(pikepdf.Dictionary(Subtype=pikepdf.Name.Image,Width=width,Height=2,BitsPerComponent=bits,ColorSpace=space,Mask=mask))
+    page.Resources=pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image));page.Contents=pdf.make_stream(b'q 80 0 0 40 10 20 cm /Im Do Q')
+    raster=read_drawing(page).images[0]
+    assert raster.alpha==expected*2 and list(image.Mask)==mask
+    source=tmp_path/'indexed.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'indexed.ai',raster_fallback=False)['rasterized']
+
+
+@pytest.mark.parametrize('mask',[[-1,1],[2,1],[0,4],[0,1,2],[.5,1],['invalid',1]])
+def test_invalid_indexed_color_key_is_rejected_without_mutating_image(mask):
+    from pdf2ai.vector import ConversionError
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    image=pdf.make_stream(b'\x00');image.update(pikepdf.Dictionary(Subtype=pikepdf.Name.Image,Width=1,Height=1,BitsPerComponent=2,ColorSpace=pikepdf.Array([pikepdf.Name.Indexed,pikepdf.Name.DeviceRGB,1,pikepdf.String(b'\xff\0\0\0\0\xff')]),Mask=mask))
+    page.Resources=pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image));page.Contents=pdf.make_stream(b'/Im Do')
+    with pytest.raises(ConversionError):read_drawing(page)
+    assert list(image.Mask)==mask
