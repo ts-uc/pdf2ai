@@ -22,13 +22,13 @@
             var d = null, name = decodeURI(files[i].name);
             try {
                 d = app.open(files[i]);
-                var before = [d.artboards.length,d.pathItems.length,d.rasterItems.length].join(',');
+                var before = [d.artboards.length,d.pathItems.length,d.rasterItems.length,d.textFrames.length].join(',');
                 var ai = new IllustratorSaveOptions(); ai.pdfCompatible = true;
                 ai.compatibility = Compatibility.ILLUSTRATOR24;
                 var saved = new File(out + '/' + name);
                 d.saveAs(saved,ai); d.close(SaveOptions.DONOTSAVECHANGES); d=null;
                 d = app.open(saved);
-                var after = [d.artboards.length,d.pathItems.length,d.rasterItems.length].join(',');
+                var after = [d.artboards.length,d.pathItems.length,d.rasterItems.length,d.textFrames.length].join(',');
                 var pdf = new PDFSaveOptions(); pdf.preserveEditability=false;
                 pdf.compatibility = PDFCompatibility.ACROBAT7;
                 pdf.colorConversionID = ColorConversion.None;

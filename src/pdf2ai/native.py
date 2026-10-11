@@ -14,7 +14,7 @@ from PIL import Image
 from fontTools.pens.boundsPen import BoundsPen
 
 from .codec import MARKER, compress, decode_private
-from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, BLEND_MODES, STROKE_CURVE_FLATNESS, read_drawing
+from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, GroupBoundary, BLEND_MODES, STROKE_CURVE_FLATNESS, read_drawing
 
 
 AI_CREATOR = "Adobe Illustrator 24.0 (Macintosh)"
@@ -198,6 +198,13 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
     for index,item in enumerate(all_items):
         body += layer_boundaries.get(index,[])
         state = item.state
+        if isinstance(item,GroupBoundary):
+            if item.begin:
+                body += ['u']
+            else:
+                body += ['U',f'{BLEND_MODES[state.blend_mode]} {num(state.fill_alpha)} {int(item.isolated)} {1 if item.knockout else 2} 0 Xy',
+                         '0 0 Xd','6 () XW']
+            continue
         for clip in state.clips:
             body += ['q',f'{int(clip.even_odd)} XR']
             if len(clip.paths)>1: body.append('*u')
@@ -393,10 +400,14 @@ def drawing_report(drawing, source, output, index, conversion_mode, fallback_rea
         warnings.append('Curve subdivision tolerance is not a bound on final outline error')
     if drawing.color_model == 'RGB' and any(i.model == 'CMYK' for i in drawing.images):
         warnings.append('CMYK images in RGB documents may change appearance after Illustrator resaving')
-    if drawing.operators.get('ri') or drawing.operators.get('i'):
-        warnings.append('PDF rendering intent/flatness operators are not preserved in editable artwork')
+    if drawing.operators.get('ri'):
+        warnings.append('Rendering intent is applied to ICC conversion; the original ICC profile is not retained in editable sRGB artwork')
+    if drawing.operators.get('i'):
+        warnings.append('PDF flatness operators are not preserved in editable artwork')
     return {"input":str(source),"output":str(output),"format":"Illustrator 2020 (24), experimental",
             "warnings":warnings,
+            "color_conversions":drawing.color_conversions,
+            "transparency_groups":sum(isinstance(i,GroupBoundary) and i.begin for i in drawing.items),
             "layers":[{"name":name,"visible":layer.visible if layer else True,"locked":layer.locked if layer else False,"printable":layer.printable if layer else True} for layer,name,_ in layer_runs(drawing)],
             "conversion_mode":conversion_mode,"rasterized":conversion_mode=='raster-fallback',
             "fallback_reason":fallback_reason,"raster_dpi":raster_dpi if fallback_reason else None,

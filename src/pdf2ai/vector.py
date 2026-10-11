@@ -18,6 +18,7 @@ IDENTITY: Matrix = (1, 0, 0, 1, 0, 0)
 BLEND_MODES = {'Normal':0, 'Multiply':1, 'Screen':2, 'Overlay':3,
                'SoftLight':4, 'HardLight':5, 'ColorDodge':6, 'ColorBurn':7,
                'Darken':8, 'Lighten':9, 'Difference':10, 'Exclusion':11, 'Hue':12, 'Saturation':13, 'Color':14, 'Luminosity':15}
+RENDERING_INTENTS = {'/Perceptual':0,'/RelativeColorimetric':1,'/Saturation':2,'/AbsoluteColorimetric':3}
 
 
 def content_instructions(container, resources, ancestors=()):
@@ -37,8 +38,8 @@ def content_instructions(container, resources, ancestors=()):
                     raise ConversionError("Recursive or excessively nested Form XObject")
 
                 group = obj.get('/Group')
-                if group is not None and (str(group.get('/S')) != '/Transparency' or bool(group.get('/I',False)) or bool(group.get('/K',False))):
-                    raise ConversionError("Isolated or knockout Form transparency groups are unsupported")
+                if group is not None and str(group.get('/S')) != '/Transparency':
+                    raise ConversionError("Unsupported Form group type")
                 yield '_form_begin',[obj],resources
                 child = obj.get('/Resources', resources)
                 yield from content_instructions(obj, child, (*ancestors,identity))
@@ -72,6 +73,9 @@ class Color:
     model: str = "CMYK"
     values: tuple[float, ...] = (0, 0, 0, 1)
     spot: Spot | None = None
+    icc_profile: bytes | None = None
+    icc_model: str | None = None
+    icc_values: tuple[float,...] | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,7 @@ class State:
     leading: float = 0
     text_rise: float = 0
     text_render_mode: int = 0
+    rendering_intent: int = 1
 
 
 @dataclass
@@ -144,6 +149,16 @@ class Raster:
     pixels: bytes
     alpha: bytes | None
     state: State
+    color_conversion: str | None = None
+
+
+@dataclass
+class GroupBoundary:
+    state: State
+    begin: bool
+    isolated: bool = False
+    color_model: str | None = None
+    knockout: bool = False
 
 
 @dataclass
@@ -159,6 +174,7 @@ class Drawing:
     outlined_glyphs: int = 0
     outlined_strokes: int = 0
     approximated_strokes: int = 0
+    color_conversions: list = field(default_factory=list)
 
 
 STROKE_CURVE_FLATNESS = 0.0025
@@ -415,16 +431,25 @@ def outline_straight_strokes(paths, state):
     return result
 
 
-def read_image(image, state: State) -> Raster:
+def read_image(image, state: State, *, color_space=None) -> Raster:
     if str(image.get("/Subtype")) != "/Image":
         raise ConversionError("Expected an image XObject after Form expansion")
     if image.get("/ImageMask", False):
         raise ConversionError("Image stencil painting is unsupported")
     if image.get("/Matte") is not None:
         raise ConversionError("Custom image Matte is unsupported")
-    space = image.get('/ColorSpace')
+    space = color_space if color_space is not None else image.get('/ColorSpace')
     indexed = isinstance(space,pikepdf.Array) and str(space[0]) == '/Indexed'
     base = space[1] if indexed else space
+    profile = None
+    if isinstance(base,pikepdf.Array) and str(base[0]) == '/ICCBased':
+        profile = base[1]
+        if not isinstance(profile,pikepdf.Stream):raise ConversionError('Invalid ICC profile stream')
+        model_name = {1:'/DeviceGray',3:'/DeviceRGB',4:'/DeviceCMYK'}.get(int(profile.get('/N',0)))
+        if model_name is None:raise ConversionError('Unsupported ICC channel count')
+        if list(profile.get('/Range',[0,1]*int(profile.N))) != [0,1]*int(profile.N):
+            raise ConversionError('Nonstandard ICC component Range is unsupported')
+        base = pikepdf.Name(model_name)
     model = {"/DeviceRGB": "RGB", "/DeviceCMYK": "CMYK", "/DeviceGray": "Gray"}.get(str(base))
     bits = int(image.get('/BitsPerComponent',0))
     if model is None or bits not in (1,2,4,8,16) or (indexed and bits==16) or (not indexed and model != 'Gray' and bits not in (8,16)):
@@ -477,6 +502,9 @@ def read_image(image, state: State) -> Raster:
     decode = image.get('/Decode')
     if decode is not None: del image['/Decode']
     if hard_mask is not None: del image['/Mask']
+    original_space = image.get('/ColorSpace')
+    if profile is not None:
+        image['/ColorSpace'] = pikepdf.Array([space[0],base,space[2],space[3]]) if indexed else base
     try:
         decoded = pikepdf.PdfImage(image).as_pil_image() if bits!=16 else None
         mode = {'RGB':'RGB','CMYK':'CMYK','Gray':'L'}[model]
@@ -501,6 +529,7 @@ def read_image(image, state: State) -> Raster:
             tables = [round(255*(limits[2*c]+(limits[2*c+1]-limits[2*c])*i/255)) for c in range(channels) for i in range(256)]
             pixels = image_pixels.point(tables).tobytes()
     finally:
+        if profile is not None: image['/ColorSpace'] = original_space
         if mask is not None: image['/SMask'] = mask
         if hard_mask is not None: image['/Mask'] = hard_mask
         if decode is not None: image['/Decode'] = decode
@@ -547,7 +576,11 @@ def read_image(image, state: State) -> Raster:
                               for v in range(256)) if a else bytes(256)
                   for a in set(alpha) for c in range(channels)}
         pixels = bytes(tables[(alpha[i//channels],i%channels)][v] for i,v in enumerate(pixels))
-    return Raster(width,height,model,pixels,alpha,copy(state))
+    if profile is not None:
+        from .color_management import icc_to_rgb
+        pixels = icc_to_rgb(pixels,width,height,model,profile.read_bytes(),state.rendering_intent)
+        model = 'RGB'
+    return Raster(width,height,model,pixels,alpha,copy(state),'ICC image converted to sRGB using LittleCMS' if profile is not None else None)
 
 
 def stencil_paths(image, state):
@@ -705,8 +738,15 @@ def read_drawing(page, *, root=None) -> Drawing:
     used_spots: dict[str, Spot] = {}
     operators: dict[str, int] = {}
     current = start = None
+    conversions = []
 
     def color(space, values):
+        default = {'/DeviceRGB':'/DefaultRGB','/DeviceCMYK':'/DefaultCMYK','/DeviceGray':'/DefaultGray'}.get(str(space))
+        if default and default in resources.get('/ColorSpace',{}):
+            replacement = resources.ColorSpace[default]
+            if not isinstance(replacement,pikepdf.Array) or str(replacement[0]) != '/ICCBased':
+                raise ConversionError('Unsupported default device color space replacement')
+            space = replacement
         if str(space) == '/Pattern':
             if len(values) != 1:
                 raise ConversionError("Only colored shading patterns are supported")
@@ -796,6 +836,21 @@ def read_drawing(page, *, root=None) -> Drawing:
         if not all(math.isfinite(v) and 0 <= v <= 1 for v in values):
             raise ConversionError("Color components must be in [0, 1]")
         if isinstance(space, pikepdf.Array):
+            if str(space[0]) == '/ICCBased':
+                from .color_management import icc_to_rgb
+                profile = space[1]
+                if not isinstance(profile,pikepdf.Stream):raise ConversionError('Invalid ICC profile stream')
+                model = {1:'Gray',3:'RGB',4:'CMYK'}.get(int(profile.get('/N',0)))
+                if model is None or len(values) != {'Gray':1,'RGB':3,'CMYK':4}[model]:
+                    raise ConversionError('Invalid ICC color components')
+                if list(profile.get('/Range',[0,1]*len(values))) != [0,1]*len(values):
+                    raise ConversionError('Nonstandard ICC component Range is unsupported')
+                pixel = bytes(round(v*255) for v in values)
+                data = profile.read_bytes()
+                rgb = icc_to_rgb(pixel,1,1,model,data,state.rendering_intent)
+                if 'ICC vector colors converted to sRGB using LittleCMS' not in conversions:
+                    conversions.append('ICC vector colors converted to sRGB using LittleCMS')
+                return Color('RGB',tuple(v/255 for v in rgb),None,data,model,values)
             spot = read_spot(space)
             if len(values) != 1: raise ConversionError("Expected one spot tint")
             if spot.name in used_spots and used_spots[spot.name] != spot:
@@ -842,8 +897,12 @@ def read_drawing(page, *, root=None) -> Drawing:
                     outlined_strokes+=len(glyph_paths)
                     approximated_strokes+=sum(any(op=='C' for op,_ in p.commands) for p in glyph_paths)
                 paints = ('fill','stroke') if paint=='both' and (nonuniform or isinstance(state.fill,Gradient) or state.fill_alpha!=state.stroke_alpha) else (paint,)
-                if len(paints)==2 and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal'):
-                    raise ConversionError('Splitting combined text fill/stroke with transparency requires knockout compositing')
+                knockout_split = len(paints)==2 and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal')
+                if knockout_split:
+                    boundary_state = copy(state);boundary_state.layer = active_layer
+                    boundary_state.fill_alpha = boundary_state.stroke_alpha = 1
+                    boundary_state.blend_mode = 'Normal'
+                    items.append(GroupBoundary(boundary_state,True,False,None,True))
                 for paint_mode in paints:
                     glyph_state = copy(state);glyph_state.layer = active_layer
                     if nonuniform and paint_mode=='stroke':
@@ -852,9 +911,23 @@ def read_drawing(page, *, root=None) -> Drawing:
                         item=PaintedPath(outlines,glyph_state,'fill',False,1)
                     else:item = PaintedPath(glyph_paths,glyph_state,paint_mode,False,stroke_scale)
                     painted.append(item);items.append(item)
+                if knockout_split:
+                    items.append(GroupBoundary(boundary_state,False,False,None,True))
             if glyph_paths and mode!=3: outlined_glyphs += 1
             advance = (width*state.font_size/1000+state.char_spacing+(state.word_spacing if code==32 and not font.cid else 0))*state.horizontal_scale
             text_matrix = compose(text_matrix,(1,0,0,1,advance,0))
+
+    def set_rendering_intent(value):
+        if str(value) not in RENDERING_INTENTS:raise ConversionError('Invalid rendering intent')
+        state.rendering_intent = RENDERING_INTENTS[str(value)]
+        from .color_management import icc_to_rgb
+        for attribute in ('fill','stroke'):
+            current = getattr(state,attribute)
+            if isinstance(current,Color) and current.icc_profile is not None:
+                rgb = icc_to_rgb(bytes(round(v*255) for v in current.icc_values),1,1,
+                                 current.icc_model,current.icc_profile,state.rendering_intent)
+                setattr(state,attribute,Color('RGB',tuple(v/255 for v in rgb),None,
+                                             current.icc_profile,current.icc_model,current.icc_values))
 
     marked = 0
     for op,args,resources in content_instructions(page, resources):
@@ -869,19 +942,31 @@ def read_drawing(page, *, root=None) -> Drawing:
             # PDF rectangles may specify opposite corners in either order.
             # Scribus outlined glyph Forms commonly use descending Y bounds.
             bounds=(min(bounds[0],bounds[2]),min(bounds[1],bounds[3]),max(bounds[0],bounds[2]),max(bounds[1],bounds[3]))
-            scopes.append((copy(state),pattern_base,len(stack),marked))
-            if obj.get('/Group') is not None and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal'):
-                raise ConversionError("Transparency applied to a whole Form group is unsupported")
+            transparency = obj.get('/Group')
+            scopes.append((copy(state),pattern_base,len(stack),marked,transparency))
+            if transparency is not None:
+                space = transparency.get('/CS')
+                if space is not None and str(space) not in ('/DeviceRGB','/DeviceCMYK'):
+                    raise ConversionError('Unsupported Form transparency group color space')
+                boundary_state = copy(state);boundary_state.layer = active_layer
+                group_model = {'/DeviceRGB':'RGB','/DeviceCMYK':'CMYK'}.get(str(space))
+                items.append(GroupBoundary(boundary_state,True,bool(transparency.get('/I',False)),group_model,bool(transparency.get('/K',False))))
             state = copy(state)
+            if transparency is not None:
+                state.fill_alpha = state.stroke_alpha = 1
+                state.blend_mode = 'Normal'
             state.matrix = compose(state.matrix,matrix)
             pattern_base = state.matrix
             pts = [point(state.matrix,x,y) for x,y in ((bounds[0],bounds[1]),(bounds[2],bounds[1]),(bounds[2],bounds[3]),(bounds[0],bounds[3]))]
             state.clips += (Clip([Subpath([('m' if i==0 else 'L',p) for i,p in enumerate(pts)],True)],False),)
             continue
         if op == '_form_end':
-            previous,base,depth,previous_marked = scopes.pop()
+            previous,base,depth,previous_marked,transparency = scopes.pop()
             if paths or pending_clip is not None or len(stack)!=depth or marked!=previous_marked:
                 raise ConversionError("Unbalanced Form graphics state")
+            if transparency is not None:
+                boundary_state = copy(previous);boundary_state.layer = active_layer
+                items.append(GroupBoundary(boundary_state,False,bool(transparency.get('/I',False)),None,bool(transparency.get('/K',False))))
             state,pattern_base = previous,base
             continue
         operators[op] = operators.get(op, 0) + 1
@@ -995,7 +1080,10 @@ def read_drawing(page, *, root=None) -> Drawing:
                             raise ConversionError("Invalid ExtGState line style")
                         setattr(state, {'/LW':'width','/LC':'cap','/LJ':'join','/ML':'miter'}[key], int(v) if key in ('/LC','/LJ') else v)
                     continue
-                if key in ('/RI','/FL'):
+                if key == '/RI':
+                    set_rendering_intent(value)
+                    continue
+                if key == '/FL':
                     continue
                 if key == '/AIS' and not bool(value): continue
                 if key == "/SMask" and str(value) == "/None": continue
@@ -1074,7 +1162,13 @@ def read_drawing(page, *, root=None) -> Drawing:
                     item=PaintedPath(stencil,image_state,'fill',False,1)
                     painted.append(item);items.append(item)
             else:
-                raster = read_image(image,image_state)
+                image_space = image.get('/ColorSpace')
+                default = {'/DeviceRGB':'/DefaultRGB','/DeviceCMYK':'/DefaultCMYK','/DeviceGray':'/DefaultGray'}.get(str(image_space))
+                if default and default in resources.get('/ColorSpace',{}):
+                    image_space = resources.ColorSpace[default]
+                    if not isinstance(image_space,pikepdf.Array) or str(image_space[0]) != '/ICCBased':
+                        raise ConversionError('Unsupported default image color space replacement')
+                raster = read_image(image,image_state,color_space=image_space)
                 images.append(raster);items.append(raster)
         elif op in ("f", "f*", "F", "S", "s", "B", "B*", "b", "b*", "n"):
             if paths and op != "n":
@@ -1100,8 +1194,12 @@ def read_drawing(page, *, root=None) -> Drawing:
                 if any(len(path.commands)>8191 for path in paths):
                     raise ConversionError("A subpath exceeds Illustrator's 8191-segment limit")
                 paints = ('fill','stroke') if paint == 'both' and (nonuniform or isinstance(state.fill,Gradient) or state.fill_alpha != state.stroke_alpha) else (paint,)
-                if len(paints)==2 and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal'):
-                    raise ConversionError('Splitting combined fill/stroke with transparency requires knockout compositing')
+                knockout_split = len(paints)==2 and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal')
+                if knockout_split:
+                    boundary_state = copy(state);boundary_state.layer = active_layer
+                    boundary_state.fill_alpha = boundary_state.stroke_alpha = 1
+                    boundary_state.blend_mode = 'Normal'
+                    items.append(GroupBoundary(boundary_state,True,False,None,True))
                 for mode in paints:
                     paint_state = copy(state);paint_state.layer = active_layer
                     if nonuniform and mode=='stroke':
@@ -1112,6 +1210,8 @@ def read_drawing(page, *, root=None) -> Drawing:
                     else:
                         item = PaintedPath(paths, paint_state, mode, "*" in op, scale)
                     painted.append(item);items.append(item)
+                if knockout_split:
+                    items.append(GroupBoundary(boundary_state,False,False,None,True))
             if pending_clip is not None:
                 state.clips += (Clip(paths,pending_clip),)
                 pending_clip = None
@@ -1125,6 +1225,8 @@ def read_drawing(page, *, root=None) -> Drawing:
                 if isinstance(value,pikepdf.Name): value = resources.get('/Properties',{}).get(str(value))
                 if value is None: raise ConversionError("Missing PDF layer property")
                 selected = layer_for(value,layer_map)
+                if any(scope[4] is not None for scope in scopes) and selected != active_layer:
+                    raise ConversionError('Layer changes inside transparency groups are unsupported')
                 if active_layer is not None and selected != active_layer:
                     raise ConversionError("Nested different PDF layer visibility conditions are unsupported")
                 active_layer = selected
@@ -1134,17 +1236,30 @@ def read_drawing(page, *, root=None) -> Drawing:
             if paths or pending_clip is not None: raise ConversionError("Layer boundary within unfinished path")
             active_layer = marked_layers.pop()
             marked -= 1
-        elif op in ('MP','DP','ri','i'):
+        elif op == 'ri':
+            set_rendering_intent(args[0])
+        elif op in ('MP','DP','i'):
             pass  # Structural tags and rendering intent do not change path geometry.
         else:
             raise ConversionError(f"Unsupported PDF operator '{op}'. No output was written. See README for supported paths, images and transparency.")
     if stack or paths or pending_clip is not None or marked or scopes or text_active: raise ConversionError("Unbalanced or unfinished PDF graphics")
     models = set()
     for item in items:
+        if isinstance(item,GroupBoundary): continue
         if isinstance(item,Raster): models.add(item.model)
         else:
             colors = ([item.state.fill] if item.paint=='fill' else [item.state.stroke] if item.paint=='stroke' else [item.state.fill,item.state.stroke])
             for value in colors:
                 models.update(c.model for _,c in value.stops) if isinstance(value,Gradient) else models.add(value.model)
     color_model = ('RGB' if str(group.get('/CS')) == '/DeviceRGB' else 'CMYK') if group is not None else ('RGB' if 'RGB' in models and not models.intersection({'CMYK','Spot'}) else 'CMYK')
-    return Drawing(box, painted, list(used_spots.values()), operators, images, items, color_model, list(layer_map.values()),outlined_glyphs,outlined_strokes,approximated_strokes)
+    if any(isinstance(i,GroupBoundary) and i.color_model is not None and i.color_model != color_model for i in items):
+        raise ConversionError('Transparency group color space differs from AI document color space')
+    conversions.extend(dict.fromkeys(i.color_conversion for i in images if i.color_conversion))
+    if color_model == 'RGB':
+        from .color_management import cmyk_to_rgb
+        for image in images:
+            if image.model == 'CMYK':
+                image.pixels = cmyk_to_rgb(image.pixels,image.width,image.height)
+                image.model = 'RGB'
+                conversions.append('DeviceCMYK image normalized to PDF renderer RGB before AI serialization')
+    return Drawing(box, painted, list(used_spots.values()), operators, images, items, color_model, list(layer_map.values()),outlined_glyphs,outlined_strokes,approximated_strokes,conversions)

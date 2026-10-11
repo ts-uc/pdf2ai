@@ -286,25 +286,24 @@ def test_nonuniform_rectangle_fill_and_stroke_keep_distinct_colors():
 
 
 @pytest.mark.parametrize('transform',['2 0 0 1 0 0 cm',''])
-def test_split_transparent_fill_stroke_falls_back_and_strict_is_atomic(tmp_path,transform):
-    from pdf2ai.vector import ConversionError
+def test_split_transparent_fill_stroke_keeps_knockout_group(tmp_path,transform):
     pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(200,100))
     page.Resources=pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=.4,ca=.8)))
     page.Contents=pdf.make_stream((transform+' /A gs 1 0 0 rg 0 0 1 RG 6 w 10 10 60 30 re B').encode())
     source=tmp_path/'transparent.pdf';pdf.save(source);target=tmp_path/'existing.ai';target.write_bytes(b'original')
-    with pytest.raises(ConversionError,match='knockout'):
-        convert(source,target,overwrite=True,raster_fallback=False)
-    assert target.read_bytes()==b'original'
-    result=convert(source,tmp_path/'fallback.ai')
-    assert result['rasterized'] and 'knockout' in result['fallback_reason']
+    result=convert(source,target,overwrite=True,raster_fallback=False)
+    assert not result['rasterized'] and result['transparency_groups']==1
+    assert target.read_bytes()!=b'original'
 
 
-def test_transparent_text_fill_stroke_split_is_rejected():
-    from pdf2ai.vector import ConversionError
+def test_transparent_text_fill_stroke_split_has_per_glyph_knockout_groups():
+    from pdf2ai.vector import GroupBoundary
     pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(200,100))
     page.Resources=pikepdf.Dictionary(Font=pikepdf.Dictionary(F=pikepdf.Dictionary(Type=pikepdf.Name.Font,Subtype=pikepdf.Name.Type1,BaseFont=pikepdf.Name.Helvetica)),ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=.4,ca=.8)))
     page.Contents=pdf.make_stream(b'/A gs BT /F 30 Tf 2 Tr 1 0 0 1 20 20 Tm (ABC) Tj ET')
-    with pytest.raises(ConversionError,match='knockout'):read_drawing(page)
+    drawing=read_drawing(page)
+    boundaries=[i for i in drawing.items if isinstance(i,GroupBoundary)]
+    assert len(boundaries)==6 and all(i.knockout for i in boundaries)
 
 
 @pytest.mark.parametrize('dash,phase,centers',[

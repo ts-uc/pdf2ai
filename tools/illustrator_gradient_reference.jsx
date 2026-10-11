@@ -16,4 +16,18 @@
         options.compatibility=Compatibility.ILLUSTRATOR24;
         d.saveAs(new File(folder+'/gradient-reference.ai'),options);
     } finally {d.close(SaveOptions.DONOTSAVECHANGES);}
+    var textDoc=app.documents.add(DocumentColorSpace.RGB,300,180);
+    try {
+        var text=textDoc.textFrames.add();text.contents='Hello ABC 123';text.position=[20,140];
+        text.textRange.characterAttributes.textFont=app.textFonts.getByName('ArialMT');
+        text.textRange.characterAttributes.size=18;
+        var color=new RGBColor();color.red=25;color.green=90;color.blue=180;
+        text.textRange.characterAttributes.fillColor=color;
+        var group=textDoc.groupItems.add();group.opacity=65;group.isIsolated=true;
+        var shape=group.pathItems.rectangle(70,20,120,40);shape.stroked=false;shape.fillColor=color;
+        var modern=new IllustratorSaveOptions();modern.pdfCompatible=true;modern.compatibility=Compatibility.ILLUSTRATOR24;
+        textDoc.saveAs(new File(folder+'/text-transparency-reference.ai'),modern);
+        var legacy=new IllustratorSaveOptions();legacy.compatibility=Compatibility.ILLUSTRATOR8;
+        textDoc.saveAs(new File(folder+'/text-legacy-reference.ai'),legacy);
+    } finally {textDoc.close(SaveOptions.DONOTSAVECHANGES);}
 }());

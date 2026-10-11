@@ -7,7 +7,7 @@ import pikepdf
 
 from .layers import Layer
 from .native import drawing_report, make_private, save_ai
-from .vector import (Clip, ConversionError, Drawing, Gradient, PaintedPath,
+from .vector import (Clip, ConversionError, Drawing, Gradient, PaintedPath, Raster,
                      Subpath, compose, read_drawing)
 
 
@@ -72,7 +72,7 @@ def translate_drawing(drawing, box, page):
             items.append(replace(item, state=state))
     return replace(drawing, box=box, items=items,
                    paths=[i for i in items if isinstance(i, PaintedPath)],
-                   images=[i for i in items if not isinstance(i, PaintedPath)],
+                   images=[i for i in items if isinstance(i, Raster)],
                    layers=[layers[l] for l in drawing.layers])
 
 
