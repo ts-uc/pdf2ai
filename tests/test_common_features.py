@@ -26,7 +26,7 @@ def feature_pdf(path):
     content=['q 20 380 160 160 re W n /Radial sh Q',
              'q 230 400 120 120 re 260 430 60 60 re W* n 0 1 0 rg 210 380 160 160 re f Q',
              'q 1 0 0 1 410 410 cm /Form Do Q',
-             'q /Split gs 1 0 0 rg 0 0 1 RG 420 320 80 50 re B Q']
+             'q /Split gs 1 0 0 rg 0 0 1 RG 420 320 80 50 re f 420 320 80 50 re S Q']
     for i,mode in enumerate(BLEND_MODES):
         x=20+(i%5)*110;y=280-(i//5)*80
         gs[f'/{mode}']=pikepdf.Dictionary(BM=pikepdf.Name('/'+mode))

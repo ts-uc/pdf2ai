@@ -120,3 +120,252 @@ def test_unsupported_radial_geometry_does_not_publish(tmp_path,coords):
     with pytest.raises(ConversionError):
         convert(source,output,overwrite=True,raster_fallback=False)
     assert output.read_bytes()==b'previous'
+
+
+@pytest.mark.parametrize('model,matte,preblended,expected',[
+    ('RGB',[1,1,1],bytes([255,127,127,255,255,255,255,0,0]),bytes([255,0,0,0,0,0,255,0,0])),
+    ('CMYK',[0,0,0,0],bytes([128,0,0,0,0,0,0,0,255,0,0,0]),bytes([255,0,0,0,0,0,0,0,255,0,0,0])),
+    ('Gray',[1],bytes([127,255,0]),bytes([0,0,0])),
+])
+def test_soft_mask_matte_recovers_straight_channels(tmp_path,model,matte,preblended,expected):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    mask=pdf.make_stream(bytes([128,0,255]));mask.update(pikepdf.Dictionary(Subtype=pikepdf.Name.Image,Width=3,Height=1,BitsPerComponent=8,ColorSpace=pikepdf.Name.DeviceGray,Matte=matte))
+    image=pdf.make_stream(preblended);image.update(pikepdf.Dictionary(Subtype=pikepdf.Name.Image,Width=3,Height=1,BitsPerComponent=8,ColorSpace=pikepdf.Name('/Device'+model),SMask=mask))
+    page.Resources=pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image));page.Contents=pdf.make_stream(b'q 80 0 0 40 10 20 cm /Im Do Q')
+    raster=read_drawing(page).images[0]
+    assert raster.pixels==expected and raster.alpha==bytes([128,0,255])
+    assert list(mask.Matte)==matte and image.SMask.objgen==mask.objgen
+    source=tmp_path/'matte.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'matte.ai',raster_fallback=False)['rasterized']
+
+
+@pytest.mark.parametrize('bits,raw,expected',[
+    (1,b'\x60',bytes([0,255,255,0])),
+    (2,b'\x1b',bytes([0,85,170,255])),
+    (4,b'\x05\xaf',bytes([0,85,170,255])),
+    (16,b'\x00\x00\x55\x55\xaa\xaa\xff\xff',bytes([0,85,170,255])),
+])
+def test_soft_mask_bit_depths(tmp_path,bits,raw,expected):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    mask=pdf.make_stream(raw);mask.update(pikepdf.Dictionary(Subtype=pikepdf.Name.Image,Width=4,Height=1,BitsPerComponent=bits,ColorSpace=pikepdf.Name.DeviceGray,Decode=[1,0]))
+    image=pdf.make_stream(b'\xff\x00\x00'*4);image.update(pikepdf.Dictionary(Subtype=pikepdf.Name.Image,Width=4,Height=1,BitsPerComponent=8,ColorSpace=pikepdf.Name.DeviceRGB,SMask=mask))
+    page.Resources=pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image));page.Contents=pdf.make_stream(b'q 80 0 0 40 10 20 cm /Im Do Q')
+    assert read_drawing(page).images[0].alpha==bytes(255-v for v in expected)
+    assert list(mask.Decode)==[1,0]
+    source=tmp_path/'depth.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'depth.ai',raster_fallback=False)['rasterized']
+
+
+@pytest.mark.parametrize('matte',[[1,1],[-1,0,0],['invalid',0,0]])
+def test_invalid_matte_does_not_mutate_mask(matte):
+    from pdf2ai.vector import ConversionError
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    mask=pdf.make_stream(b'\x80');mask.update(pikepdf.Dictionary(Subtype=pikepdf.Name.Image,Width=1,Height=1,BitsPerComponent=8,ColorSpace=pikepdf.Name.DeviceGray,Matte=matte))
+    image=pdf.make_stream(b'\xff\x80\x80');image.update(pikepdf.Dictionary(Subtype=pikepdf.Name.Image,Width=1,Height=1,BitsPerComponent=8,ColorSpace=pikepdf.Name.DeviceRGB,SMask=mask))
+    page.Resources=pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image));page.Contents=pdf.make_stream(b'/Im Do')
+    with pytest.raises(ConversionError):
+        read_drawing(page)
+    assert image.SMask.objgen==mask.objgen
+
+
+@pytest.mark.parametrize('matrix',[(2,0,0,.5,20,20),(1,.3,.6,1,30,15),(-2,0,0,.5,250,20)])
+@pytest.mark.parametrize('cap',[0,1,2])
+def test_nonuniform_straight_strokes_preserve_edges_and_state(tmp_path,matrix,cap):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(300,150))
+    page.Resources=pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=.4,ca=.9)))
+    content='q '+ ' '.join(map(str,matrix))+f' cm /A gs 0.2 0.4 0.8 RG 12 w {cap} J 10 20 m 90 60 l S Q'
+    page.Contents=pdf.make_stream(content.encode())
+    drawing=read_drawing(page);item=drawing.paths[0]
+    assert drawing.outlined_strokes==1
+    assert item.paint=='fill' and item.state.fill.values==pytest.approx((.2,.4,.8))
+    assert item.state.fill_alpha==.4
+    # The exact quadrilateral is the transformed user-space stroke envelope.
+    import math
+    tx,ty=80/math.hypot(80,40),40/math.hypot(80,40)
+    extra=6 if cap==2 else 0
+    expected=[point(matrix,10-extra*tx-6*ty,20-extra*ty+6*tx),
+              point(matrix,90+extra*tx-6*ty,60+extra*ty+6*tx),
+              point(matrix,90+extra*tx+6*ty,60+extra*ty-6*tx),
+              point(matrix,10-extra*tx+6*ty,20-extra*ty-6*tx)]
+    for (_,actual),target in zip(item.paths[0].commands,expected):assert actual==pytest.approx(target)
+    assert len(item.paths)==(3 if cap==1 else 1)
+    source=tmp_path/'stroke.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'stroke.ai',raster_fallback=False)['rasterized']
+
+
+@pytest.mark.parametrize('path',['[5 3] 0 d 0 0 m 30 0 l 30 30 l S','0 0 m 30 0 l h S','[0 3] 0 d 0 0 m 30 0 l S','0 0 m 30 0 30 30 0 30 c S'])
+def test_complex_nonuniform_strokes_still_rejected(path):
+    from pdf2ai.vector import ConversionError
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Contents=pdf.make_stream(('2 0 0 1 0 0 cm '+path).encode())
+    with pytest.raises(ConversionError):read_drawing(page)
+
+
+@pytest.mark.parametrize('dash,phase,intervals',[
+    ((3,),1,[(0,2),(5,8),(11,12)]),
+    ((3,2),4,[(1,4),(6,9),(11,12)]),
+    ((3,2),14,[(1,4),(6,9),(11,12)]),
+    ((2,3,4),0,[(0,2),(5,9),(11,12)]),
+])
+def test_affine_dash_intervals_and_phase_reset(dash,phase,intervals,tmp_path):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    content=f'2 0.5 0.6 1 10 10 cm 2 w [{' '.join(map(str,dash))}] {phase} d 0 0 m 12 0 l 0 10 m 12 10 l S'
+    page.Contents=pdf.make_stream(content.encode());drawing=read_drawing(page)
+    item=drawing.paths[0];assert item.paint=='fill' and drawing.outlined_strokes==2
+    assert len(item.paths)==len(intervals)*2
+    matrix=(2,.5,.6,1,10,10)
+    for row,y in enumerate((0,10)):
+        for i,(start,end) in enumerate(intervals):
+            actual=item.paths[row*len(intervals)+i].commands
+            expected=[point(matrix,start,y+1),point(matrix,end,y+1),point(matrix,end,y-1),point(matrix,start,y-1)]
+            for (_,coords),p in zip(actual,expected):assert coords==pytest.approx(p)
+    source=tmp_path/'dash.pdf';pdf.save(source)
+    report=convert(source,tmp_path/'dash.ai',raster_fallback=False)
+    assert not report['rasterized'] and report['outlined_strokes']==2
+
+
+def test_dash_gap_only_preserves_pending_clip():
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Contents=pdf.make_stream(b'2 0 0 1 0 0 cm [1 100] 2 d 0 0 m 10 0 l W S 1 0 0 rg 0 0 20 20 re f')
+    drawing=read_drawing(page)
+    assert len(drawing.paths)==1 and len(drawing.paths[0].state.clips)==1
+    assert drawing.outlined_strokes==1
+
+
+def test_excessively_dense_dashes_are_rejected_without_publishing(tmp_path):
+    from pdf2ai.vector import ConversionError
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Contents=pdf.make_stream(b'2 0 0 1 0 0 cm [.0001 .0001] 0 d 0 0 m 100 0 l S')
+    source=tmp_path/'dense.pdf';pdf.save(source);target=tmp_path/'existing.ai';target.write_bytes(b'original')
+    with pytest.raises(ConversionError,match='complexity'):
+        convert(source,target,overwrite=True,raster_fallback=False)
+    assert target.read_bytes()==b'original'
+
+
+@pytest.mark.parametrize('matrix',[(2,0,0,.5,20,20),(1,.3,.6,1,30,15),(-2,0,0,.5,250,20)])
+@pytest.mark.parametrize('size,line_width',[( (60,30),8),((-60,30),8),((60,-30),8),((60,30),40)])
+def test_nonuniform_rectangle_frame_has_exact_ring(tmp_path,matrix,size,line_width):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(300,150));w,h=size
+    page.Contents=pdf.make_stream((' '.join(map(str,matrix))+f' cm {line_width} w 10 20 {w} {h} re S').encode())
+    drawing=read_drawing(page);item=drawing.paths[0]
+    assert item.paint=='fill' and drawing.outlined_strokes==1
+    r=line_width/2;x0,x1=sorted((10,10+w));y0,y1=sorted((20,20+h))
+    outer=[point(matrix,x,y) for x,y in ((x0-r,y0-r),(x1+r,y0-r),(x1+r,y1+r),(x0-r,y1+r))]
+    assert len(item.paths)==(2 if min(abs(w),abs(h))>line_width else 1)
+    actual=[p for _,p in item.paths[0].commands]
+    for target in outer: assert any(p==pytest.approx(target) for p in actual)
+    def area(path):
+        p=[v for _,v in path.commands]
+        return sum(a[0]*b[1]-a[1]*b[0] for a,b in zip(p,p[1:]+p[:1]))/2
+    det=matrix[0]*matrix[3]-matrix[1]*matrix[2]
+    assert area(item.paths[0])*det<0
+    if len(item.paths)==2:
+        assert area(item.paths[1])*det>0
+        assert abs(sum(map(area,item.paths)))==pytest.approx(abs(det)*2*line_width*(abs(w)+abs(h)))
+    source=tmp_path/'frame.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'frame.ai',raster_fallback=False)['rasterized']
+
+
+@pytest.mark.parametrize('style',['[3 2] 0 d'])
+def test_unsupported_nonuniform_rectangle_styles_are_rejected(style):
+    from pdf2ai.vector import ConversionError
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Contents=pdf.make_stream(f'2 0 0 1 0 0 cm {style} 10 10 40 30 re S'.encode())
+    with pytest.raises(ConversionError):read_drawing(page)
+
+
+def test_nonuniform_rectangle_fill_and_stroke_keep_distinct_colors():
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(200,100))
+    page.Resources=pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=1,ca=1)))
+    page.Contents=pdf.make_stream(b'2 0 0 1 0 0 cm /A gs 1 0 0 rg 0 0 1 RG 6 w 10 10 60 30 re B')
+    drawing=read_drawing(page)
+    fill,stroke=drawing.paths
+    assert fill.paint==stroke.paint=='fill'
+    assert fill.state.fill.values==(1,0,0) and fill.state.fill_alpha==1
+    assert stroke.state.fill.values==(0,0,1) and stroke.state.fill_alpha==1
+    assert len(fill.paths)==1 and len(stroke.paths)==2
+
+
+@pytest.mark.parametrize('transform',['2 0 0 1 0 0 cm',''])
+def test_split_transparent_fill_stroke_falls_back_and_strict_is_atomic(tmp_path,transform):
+    from pdf2ai.vector import ConversionError
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(200,100))
+    page.Resources=pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=.4,ca=.8)))
+    page.Contents=pdf.make_stream((transform+' /A gs 1 0 0 rg 0 0 1 RG 6 w 10 10 60 30 re B').encode())
+    source=tmp_path/'transparent.pdf';pdf.save(source);target=tmp_path/'existing.ai';target.write_bytes(b'original')
+    with pytest.raises(ConversionError,match='knockout'):
+        convert(source,target,overwrite=True,raster_fallback=False)
+    assert target.read_bytes()==b'original'
+    result=convert(source,tmp_path/'fallback.ai')
+    assert result['rasterized'] and 'knockout' in result['fallback_reason']
+
+
+def test_transparent_text_fill_stroke_split_is_rejected():
+    from pdf2ai.vector import ConversionError
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(200,100))
+    page.Resources=pikepdf.Dictionary(Font=pikepdf.Dictionary(F=pikepdf.Dictionary(Type=pikepdf.Name.Font,Subtype=pikepdf.Name.Type1,BaseFont=pikepdf.Name.Helvetica)),ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=.4,ca=.8)))
+    page.Contents=pdf.make_stream(b'/A gs BT /F 30 Tf 2 Tr 1 0 0 1 20 20 Tm (ABC) Tj ET')
+    with pytest.raises(ConversionError,match='knockout'):read_drawing(page)
+
+
+@pytest.mark.parametrize('dash,phase,centers',[
+    ((0,5),0,[0,5,10]),((0,5),2,[3,8]),((0,5),12,[3,8]),
+    ((0,3,0,2),0,[0,3,5,8,10]),
+])
+def test_round_dotted_strokes_include_zero_length_dashes(tmp_path,dash,phase,centers):
+    from pdf2ai.vector import outline_straight_strokes
+    matrix=(2,.3,.6,1,10,20);state=State(matrix=matrix,width=2,cap=1,dash=dash,phase=phase)
+    path=Subpath([('m',point(matrix,0,0)),('L',point(matrix,10,0))])
+    shapes=outline_straight_strokes([path],state)
+    assert len(shapes)==len(centers)
+    for shape,x in zip(shapes,centers):
+        assert len(shape.commands)==5 and shape.commands[0][1]==pytest.approx(point(matrix,x,1))
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Contents=pdf.make_stream((' '.join(map(str,matrix))+f' cm 2 w 1 J [{' '.join(map(str,dash))}] {phase} d 0 0 m 10 0 l S').encode())
+    source=tmp_path/'dots.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'dots.ai',raster_fallback=False)['rasterized']
+
+
+@pytest.mark.parametrize('join,count',[(0,3),(1,3),(2,3)])
+@pytest.mark.parametrize('matrix',[(2,0,0,.5,20,20),(1,.3,.6,1,30,15),(-2,0,0,.5,250,20)])
+def test_nonuniform_polyline_join_regions(matrix,join,count,tmp_path):
+    from pdf2ai.vector import outline_straight_strokes
+    state=State(matrix=matrix,width=4,join=join)
+    path=Subpath([('m',point(matrix,10,10)),('L',point(matrix,50,10)),('L',point(matrix,50,50))])
+    contours=outline_straight_strokes([path],state)
+    assert len(contours)==count
+    join_shape=contours[-1]
+    if join==0:
+        assert any(coords==pytest.approx(point(matrix,52,8)) for _,coords in join_shape.commands)
+    elif join==1:
+        assert len(join_shape.commands)==5 and join_shape.commands[0][1]==pytest.approx(point(matrix,50,12))
+    else:
+        assert len(join_shape.commands)==3
+        for x,y in ((50,10),(50,8),(52,10)):
+            assert any(coords==pytest.approx(point(matrix,x,y)) for _,coords in join_shape.commands)
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(300,150))
+    page.Contents=pdf.make_stream((' '.join(map(str,matrix))+f' cm 4 w {join} j 10 10 m 50 10 l 50 50 l S').encode())
+    source=tmp_path/'polyline.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'polyline.ai',raster_fallback=False)['rasterized']
+
+
+def test_miter_limit_bevels_sharp_turn_and_closed_polygon_accepts_explicit_closure():
+    from pdf2ai.vector import outline_straight_strokes
+    matrix=(2,0,0,1,0,0);state=State(matrix=matrix,width=4,miter=1)
+    path=Subpath([('m',(0,0)),('L',(80,0)),('L',(80,40))])
+    shapes=outline_straight_strokes([path],state)
+    assert len(shapes[-1].commands)==3
+    vertices=[(0,0),(80,0),(60,40),(0,0)]
+    closed=Subpath([('m' if i==0 else 'L',v) for i,v in enumerate(vertices)],True)
+    assert len(outline_straight_strokes([closed],state))==6
+
+
+@pytest.mark.parametrize('join',[0,1,2])
+def test_rectangle_corner_styles_preserve_transparency(join,tmp_path):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(200,150))
+    page.Resources=pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=.4)))
+    page.Contents=pdf.make_stream(f'1.5 .2 .5 .7 20 20 cm /A gs 8 w {join} j 20 20 60 40 re S'.encode())
+    drawing=read_drawing(page)
+    assert drawing.paths[0].state.fill_alpha==.4 and drawing.outlined_strokes==1
+    source=tmp_path/'join.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'join.ai',raster_fallback=False)['rasterized']

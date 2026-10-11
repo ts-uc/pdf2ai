@@ -39,7 +39,7 @@ def feature_pdf(path):
     content=['q 20 380 160 160 re W n /Radial sh Q',
              'q 230 400 120 120 re 260 430 60 60 re W* n 0 1 0 rg 210 380 160 160 re f Q',
              'q 1 0 0 1 410 410 cm /Form Do Q',
-             'q /Split gs 1 0 0 rg 0 0 1 RG 420 320 80 50 re B Q']
+             'q /Split gs 1 0 0 rg 0 0 1 RG 420 320 80 50 re f 420 320 80 50 re S Q']
     for i,mode in enumerate(BLEND_MODES):
         x=20+(i%5)*110;y=280-(i//5)*80
         gs[f'/{mode}']=pikepdf.Dictionary(BM=pikepdf.Name('/'+mode))
@@ -297,7 +297,7 @@ def build_fallback(path,temporary):
     pdf.pages[0].obj.Group=pikepdf.Dictionary(S=pikepdf.Name.Transparency,CS=pikepdf.Name.DeviceRGB,K=True)
     add('Knockout transparency group',pdf,'nonknockout')
     add('Hairline stroke',document('0 w 30 50 m 350 160 l S',size=A4),'hairline')
-    add('Nonuniform stroke transform',document('q 2 0 0 1 30 50 cm 4 w 0 0 150 100 re S Q',size=A4),'Nonuniform')
+    add('Nonuniform curved stroke transform',document('q 2 0 0 1 30 50 cm 4 w 0 0 m 50 120 100 -20 150 100 c S Q',size=A4),'Nonuniform')
     lab=pikepdf.Array([pikepdf.Name.Lab,pikepdf.Dictionary(WhitePoint=[0.9505,1,1.089])])
     add('Lab color space',document('/L cs 65 30 20 scn 30 50 300 120 re f',pikepdf.Dictionary(ColorSpace=pikepdf.Dictionary(L=lab)),size=A4),'Color components')
     pdf=document('0 0.5 1 rg 30 50 300 120 re f',size=A4)

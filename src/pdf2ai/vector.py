@@ -157,6 +157,172 @@ class Drawing:
     color_model: str = "CMYK"
     layers: list = field(default_factory=list)
     outlined_glyphs: int = 0
+    outlined_strokes: int = 0
+
+
+def outline_rectangle_stroke(path,state):
+    """A mitered rectangular ring, constructed in the stroking user space."""
+    if state.dash or state.join!=0 or state.miter<math.sqrt(2):
+        raise ConversionError('Nonuniform rectangle strokes require solid miter joins with sufficient miter limit')
+    if len(path.commands)!=4 or [op for op,_ in path.commands]!=['m','L','L','L']:
+        raise ConversionError('Unsupported nonuniform closed stroke')
+    a,b,c,d,_,_=state.matrix;det=a*d-b*c
+    if abs(det)<1e-12:raise ConversionError('Singular stroke transformation')
+    pts=[v for _,v in path.commands];origin=pts[0]
+    def inverse_delta(p):
+        x,y=p[0]-origin[0],p[1]-origin[1]
+        return (d*x-c*y)/det,(-b*x+a*y)/det
+    u,v=inverse_delta(pts[1]),inverse_delta(pts[3])
+    w,h=math.hypot(*u),math.hypot(*v)
+    if min(w,h)<1e-12:raise ConversionError('Degenerate nonuniform rectangle')
+    if abs(u[0]*v[0]+u[1]*v[1])>1e-8*w*h or not all(math.isclose(x,y,rel_tol=1e-8,abs_tol=1e-8) for x,y in zip(inverse_delta(pts[2]),(u[0]+v[0],u[1]+v[1]))):
+        raise ConversionError('Nonuniform closed stroke is not a rectangle in stroking user space')
+    def transform(x,y):
+        X,Y=x*u[0]/w+y*v[0]/h,x*u[1]/w+y*v[1]/h
+        return origin[0]+a*X+c*Y,origin[1]+b*X+d*Y
+    r=state.width/2
+    outer=[(-r,-r),(w+r,-r),(w+r,h+r),(-r,h+r)]
+    inner=[(r,r),(w-r,r),(w-r,h-r),(r,h-r)]
+    # All expanded strokes have clockwise outer boundaries in user space,
+    # so overlapping subpaths do not cancel under the nonzero filling rule.
+    if u[0]*v[1]-u[1]*v[0]>0:outer.reverse()
+    else:inner.reverse()
+    result=[]
+    for contour in [outer]+([inner] if w>2*r and h>2*r else []):
+        result.append(Subpath([('m' if i==0 else 'L',transform(*p)) for i,p in enumerate(contour)],True))
+    return result
+
+
+def stroke_circle(center,r,matrix):
+    k=4*(math.sqrt(2)-1)/3
+    arcs=(((k*r,r),(r,k*r),(r,0)),((r,-k*r),(k*r,-r),(0,-r)),
+          ((-k*r,-r),(-r,-k*r),(-r,0)),((-r,k*r),(-k*r,r),(0,r)))
+    commands=[('m',point(matrix,center[0],center[1]+r))]
+    for arc in arcs:
+        commands.append(('C',tuple(v for x,y in arc for v in point(matrix,center[0]+x,center[1]+y))))
+    return Subpath(commands,True)
+
+
+def outline_polyline_stroke(path,state):
+    """Union of stroke bands, endpoint caps, and the PDF join regions."""
+    if state.dash:raise ConversionError('Nonuniform dashed polylines are unsupported')
+    if not path.commands or path.commands[0][0]!='m' or any(op!='L' for op,_ in path.commands[1:]):
+        raise ConversionError('Nonuniform curved strokes are unsupported')
+    a,b,c,d,e,f=state.matrix;det=a*d-b*c
+    if abs(det)<1e-12:raise ConversionError('Singular stroke transformation')
+    pts=[((d*(x-e)-c*(y-f))/det,(-b*(x-e)+a*(y-f))/det) for _,(x,y) in path.commands]
+    pts=[v for i,v in enumerate(pts) if i==0 or v!=pts[i-1]]
+    if path.closed and len(pts)>1 and pts[-1]==pts[0]:pts.pop()
+    if len(pts)<2:raise ConversionError('Degenerate nonuniform polyline')
+    segments=list(zip(pts,pts[1:]+([pts[0]] if path.closed else [])))
+    directions=[];result=[];r=state.width/2
+    def polygon(vertices):
+        area=sum(x*Y-y*X for (x,y),(X,Y) in zip(vertices,vertices[1:]+vertices[:1]))
+        if area>0:vertices=list(reversed(vertices))
+        result.append(Subpath([('m' if i==0 else 'L',point(state.matrix,*v)) for i,v in enumerate(vertices)],True))
+    for first,last in segments:
+        dx,dy=last[0]-first[0],last[1]-first[1];length=math.hypot(dx,dy)
+        if length<1e-12:raise ConversionError('Degenerate nonuniform polyline segment')
+        t=(dx/length,dy/length);directions.append(t);nx,ny=-t[1]*r,t[0]*r
+        polygon([(first[0]+nx,first[1]+ny),(last[0]+nx,last[1]+ny),(last[0]-nx,last[1]-ny),(first[0]-nx,first[1]-ny)])
+    for i in (range(len(pts)) if path.closed else range(1,len(pts)-1)):
+        vertex=pts[i];before=directions[(i-1)%len(directions)];after=directions[i%len(directions)]
+        cross=before[0]*after[1]-before[1]*after[0];dot=before[0]*after[0]+before[1]*after[1]
+        if abs(cross)<1e-10:
+            if dot<0:raise ConversionError('Reversing nonuniform polyline joins are unsupported')
+            continue
+        if state.join==1:
+            result.append(stroke_circle(vertex,r,state.matrix));continue
+        sign=-1 if cross>0 else 1
+        n1=(-before[1]*r*sign,before[0]*r*sign);n2=(-after[1]*r*sign,after[0]*r*sign)
+        first=(vertex[0]+n1[0],vertex[1]+n1[1]);last=(vertex[0]+n2[0],vertex[1]+n2[1])
+        scale=((last[0]-first[0])*after[1]-(last[1]-first[1])*after[0])/cross
+        miter=(first[0]+scale*before[0],first[1]+scale*before[1])
+        if state.join==0 and math.dist(vertex,miter)<=state.miter*r:
+            polygon([vertex,first,miter,last])
+        else:polygon([vertex,first,last])
+    if not path.closed:
+        for center,t in ((pts[0],directions[0]),(pts[-1],directions[-1])):
+            if state.cap==1:result.append(stroke_circle(center,r,state.matrix))
+            elif state.cap==2:
+                nx,ny=-t[1]*r,t[0]*r;dx,dy=t[0]*r,t[1]*r
+                polygon([(center[0]+dx+nx,center[1]+dy+ny),(center[0]-dx+nx,center[1]-dy+ny),(center[0]-dx-nx,center[1]-dy-ny),(center[0]+dx-nx,center[1]+dy-ny)])
+    if len(result)>60000:raise ConversionError('Outlined polyline exceeds complexity limit')
+    return result
+
+
+def outline_straight_strokes(paths, state):
+    """Expand single-segment strokes in stroking user space, then apply CTM."""
+    if any(v==0 for v in state.dash) and state.cap!=1:
+        raise ConversionError('Zero-length nonuniform dashes require round caps')
+    a,b,c,d,_,_ = state.matrix
+    det = a*d-b*c
+    if abs(det)<1e-12:
+        raise ConversionError('Singular stroke transformation')
+    result=[]
+    for path in paths:
+        if path.closed or len(path.commands)!=2:
+            if path.closed and len(path.commands)==4 and not state.dash and state.join==0 and state.miter>=math.sqrt(2):
+                try:
+                    result.extend(outline_rectangle_stroke(path,state));continue
+                except ConversionError:
+                    pass  # Other polygons use the general join construction.
+            result.extend(outline_polyline_stroke(path,state));continue
+        if [op for op,_ in path.commands]!=['m','L']:
+            raise ConversionError('Nonuniform curved strokes are unsupported')
+        start,end = (coords for _,coords in path.commands)
+        dx,dy=end[0]-start[0],end[1]-start[1]
+        ux,uy=(d*dx-c*dy)/det,(-b*dx+a*dy)/det
+        length=math.hypot(ux,uy)
+        if length<1e-12:
+            raise ConversionError('Degenerate nonuniform stroke')
+        if state.dash:
+            pattern=state.dash*2 if len(state.dash)%2 else state.dash
+            phase=state.phase%sum(pattern)
+            index=0
+            while phase>0 and phase>=pattern[index]:
+                phase-=pattern[index];index=(index+1)%len(pattern)
+            remaining=pattern[index]-phase
+            position=0
+            solid=copy(state);solid.dash=();solid.phase=0
+            steps=0
+            while position<length or (position==length and remaining==0):
+                end_position=min(length,position+remaining)
+                if remaining>0 and end_position<=position:
+                    raise ConversionError('Dash interval is below coordinate precision')
+                if index%2==0:
+                    first=(start[0]+dx*position/length,start[1]+dy*position/length)
+                    last=(start[0]+dx*end_position/length,start[1]+dy*end_position/length)
+                    if remaining==0:
+                        x,y=first;center=((d*(x-state.matrix[4])-c*(y-state.matrix[5]))/det,(-b*(x-state.matrix[4])+a*(y-state.matrix[5]))/det)
+                        result.append(stroke_circle(center,state.width/2,state.matrix))
+                    else:
+                        result.extend(outline_straight_strokes([Subpath([('m',first),('L',last)])],solid))
+                if end_position<position+remaining:break
+                position=end_position;index=(index+1)%len(pattern);remaining=pattern[index]
+                steps+=1
+                if steps>20000 or len(result)>60000:
+                    raise ConversionError('Outlined dash pattern exceeds complexity limit')
+            continue
+        tx,ty=ux/length,uy/length
+        def transform(x,y):
+            X,Y=x*tx-y*ty,x*ty+y*tx
+            return start[0]+a*X+c*Y,start[1]+b*X+d*Y
+        radius=state.width/2
+        extra=radius if state.cap==2 else 0
+        corners=((-extra,radius),(length+extra,radius),(length+extra,-radius),(-extra,-radius))
+        result.append(Subpath([('m' if i==0 else 'L',transform(*v)) for i,v in enumerate(corners)],True))
+        if state.cap==1:
+            # Four cubic arcs approximate a circle; affine CTM gives elliptical caps.
+            k=4*(math.sqrt(2)-1)/3; r=radius
+            for center in (0,length):
+                arcs=(((k*r,r),(r,k*r),(r,0)),((r,-k*r),(k*r,-r),(0,-r)),
+                      ((-k*r,-r),(-r,-k*r),(-r,0)),((-r,k*r),(-k*r,r),(0,r)))
+                commands=[('m',transform(center,r))]
+                for arc in arcs:
+                    commands.append(('C',tuple(v for x,y in arc for v in transform(center+x,y))))
+                result.append(Subpath(commands,True))
+    return result
 
 
 def read_image(image, state: State) -> Raster:
@@ -178,13 +344,23 @@ def read_image(image, state: State) -> Raster:
         raise ConversionError("Image dimensions exceed the supported limit")
     mask = image.get("/SMask")
     alpha = None
+    matte = None
     if mask is not None:
         if not isinstance(mask,pikepdf.Stream) or str(mask.get('/Subtype')) != '/Image':
             raise ConversionError("Only grayscale image soft masks are supported")
-        if (int(mask.Width),int(mask.Height)) != (width,height) or str(mask.get('/ColorSpace')) != '/DeviceGray' or int(mask.get('/BitsPerComponent',0)) != 8:
-            raise ConversionError("Image soft mask must be 8-bit grayscale with matching dimensions")
-        if any(mask.get(k) is not None for k in ('/Matte','/Mask','/SMask')):
-            raise ConversionError("Custom or nested image soft masks are unsupported")
+        mask_bits = int(mask.get('/BitsPerComponent',0))
+        if (int(mask.Width),int(mask.Height)) != (width,height) or str(mask.get('/ColorSpace')) != '/DeviceGray' or mask_bits not in (1,2,4,8,16):
+            raise ConversionError("Image soft mask must be grayscale with matching dimensions")
+        if any(mask.get(k) is not None for k in ('/Mask','/SMask')):
+            raise ConversionError("Nested image soft masks are unsupported")
+        if mask.get('/Matte') is not None:
+            try:
+                matte = tuple(map(float,mask.Matte))
+            except (ValueError,TypeError) as exc:
+                raise ConversionError('Invalid soft mask Matte') from exc
+            channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
+            if indexed or len(matte)!=channels or not all(math.isfinite(v) and 0<=v<=1 for v in matte):
+                raise ConversionError('Invalid or unsupported soft mask Matte')
         mask_decode = mask.get('/Decode')
         if mask_decode is not None:
             limits = tuple(map(float,mask_decode))
@@ -192,7 +368,13 @@ def read_image(image, state: State) -> Raster:
                 raise ConversionError('Invalid soft mask Decode')
             del mask['/Decode']
         try:
-            alpha = pikepdf.PdfImage(mask).as_pil_image().convert('L').tobytes()
+            if mask_bits == 16:
+                raw = mask.read_bytes()
+                if len(raw)!=width*height*2:
+                    raise ConversionError('Invalid 16-bit soft mask sample length')
+                alpha = bytes((int.from_bytes(raw[i:i+2],'big')+128)//257 for i in range(0,len(raw),2))
+            else:
+                alpha = pikepdf.PdfImage(mask).as_pil_image().convert('L').tobytes()
         finally:
             if mask_decode is not None: mask['/Decode'] = mask_decode
         if mask_decode is not None:
@@ -252,6 +434,14 @@ def read_image(image, state: State) -> Raster:
     channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
     if len(pixels) != width*height*channels or (alpha is not None and len(alpha) != width*height):
         raise ConversionError("Decoded image length is invalid")
+    if matte is not None:
+        # PDF 32000-1, 11.6.5.3: c' = alpha*c + (1-alpha)*matte.
+        # Recover straight color after Decode, before storing the separate alpha.
+        # Color under zero alpha is undefined; choose zero deterministically.
+        tables = {(a,c): bytes(max(0,min(255,round((v-255*matte[c])*255/a+255*matte[c])))
+                              for v in range(256)) if a else bytes(256)
+                  for a in set(alpha) for c in range(channels)}
+        pixels = bytes(tables[(alpha[i//channels],i%channels)][v] for i,v in enumerate(pixels))
     return Raster(width,height,model,pixels,alpha,copy(state))
 
 
@@ -517,6 +707,7 @@ def read_drawing(page, *, root=None) -> Drawing:
     text_clips = []
     font_cache = {}
     outlined_glyphs = 0
+    outlined_strokes = 0
 
     def show_text(string):
         nonlocal text_matrix,outlined_glyphs
@@ -541,6 +732,8 @@ def read_drawing(page, *, root=None) -> Drawing:
                 if paint!='fill' and (state.width==0 or not math.isclose(stroke_scale,math.hypot(c,d),abs_tol=1e-7) or not math.isclose(a*c+b*d,0,abs_tol=1e-7)):
                     raise ConversionError("Hairline/nonuniform text strokes are unsupported")
                 paints = ('fill','stroke') if paint=='both' and (isinstance(state.fill,Gradient) or state.fill_alpha!=state.stroke_alpha) else (paint,)
+                if len(paints)==2 and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal'):
+                    raise ConversionError('Splitting combined text fill/stroke with transparency requires knockout compositing')
                 for paint_mode in paints:
                     glyph_state = copy(state);glyph_state.layer = active_layer
                     item = PaintedPath(glyph_paths,glyph_state,paint_mode,False,stroke_scale)
@@ -785,14 +978,23 @@ def read_drawing(page, *, root=None) -> Drawing:
                         raise ConversionError("Process-color overprint mode 0 is unsupported; mode 1 is required")
                 a,b,c,d,_,_ = state.matrix
                 scale = math.hypot(a,b)
-                if paint != "fill" and (not math.isclose(scale,math.hypot(c,d),abs_tol=1e-7) or not math.isclose(a*c+b*d,0,abs_tol=1e-7)):
-                    raise ConversionError("Nonuniform transformed strokes are unsupported")
+                nonuniform = paint != 'fill' and (not math.isclose(scale,math.hypot(c,d),abs_tol=1e-7) or not math.isclose(a*c+b*d,0,abs_tol=1e-7))
+                outlines = outline_straight_strokes(paths,state) if nonuniform else None
+                if nonuniform: outlined_strokes += len(paths)
                 if any(len(path.commands)>8191 for path in paths):
                     raise ConversionError("A subpath exceeds Illustrator's 8191-segment limit")
-                paints = ('fill','stroke') if paint == 'both' and (isinstance(state.fill,Gradient) or state.fill_alpha != state.stroke_alpha) else (paint,)
+                paints = ('fill','stroke') if paint == 'both' and (nonuniform or isinstance(state.fill,Gradient) or state.fill_alpha != state.stroke_alpha) else (paint,)
+                if len(paints)==2 and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal'):
+                    raise ConversionError('Splitting combined fill/stroke with transparency requires knockout compositing')
                 for mode in paints:
                     paint_state = copy(state);paint_state.layer = active_layer
-                    item = PaintedPath(paths, paint_state, mode, "*" in op, scale)
+                    if nonuniform and mode=='stroke':
+                        if not outlines: continue
+                        paint_state.fill=state.stroke;paint_state.fill_alpha=state.stroke_alpha
+                        paint_state.fill_overprint=state.stroke_overprint
+                        item = PaintedPath(outlines,paint_state,'fill',False,1)
+                    else:
+                        item = PaintedPath(paths, paint_state, mode, "*" in op, scale)
                     painted.append(item);items.append(item)
             if pending_clip is not None:
                 state.clips += (Clip(paths,pending_clip),)
@@ -829,4 +1031,4 @@ def read_drawing(page, *, root=None) -> Drawing:
             for value in colors:
                 models.update(c.model for _,c in value.stops) if isinstance(value,Gradient) else models.add(value.model)
     color_model = ('RGB' if str(group.get('/CS')) == '/DeviceRGB' else 'CMYK') if group is not None else ('RGB' if 'RGB' in models and not models.intersection({'CMYK','Spot'}) else 'CMYK')
-    return Drawing(box, painted, list(used_spots.values()), operators, images, items, color_model, list(layer_map.values()),outlined_glyphs)
+    return Drawing(box, painted, list(used_spots.values()), operators, images, items, color_model, list(layer_map.values()),outlined_glyphs,outlined_strokes)

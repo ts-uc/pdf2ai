@@ -391,6 +391,7 @@ def drawing_report(drawing, source, output, index, conversion_mode, fallback_rea
             "editable_vectors":conversion_mode=='vector',
             "lost_features":['editable paths/text','spot ink separation','layer structure'] if fallback_reason else [],
             "outlined_glyphs":drawing.outlined_glyphs,
+            "outlined_strokes":drawing.outlined_strokes,
             "text_outlined":(outline_text or drawing.outlined_glyphs>0) and conversion_mode=='vector',"page":index+1,"page_box":list(drawing.box),"painted_paths":len(drawing.paths),
             "subpaths":sum(len(p.paths) for p in drawing.paths),
             "segments":sum(len(s.commands) for p in drawing.paths for s in p.paths),

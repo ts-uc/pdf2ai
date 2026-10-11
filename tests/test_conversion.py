@@ -72,7 +72,7 @@ def test_stroke_scale_and_nonuniform_rejection(tmp_path):
         body=read_private(pdf)
         assert b'6 w' in body and b'[8 4] 2 d' in body and b'20 20 L' in body
     before=out.read_bytes()
-    make_pdf(source,b'q 2 0 0 1 0 0 cm 0 0 m 10 10 l S Q')
+    make_pdf(source,b'q 2 0 0 1 0 0 cm 0 0 m 10 10 15 10 20 0 c S Q')
     with pytest.raises(ConversionError,match='Nonuniform'):convert(source,out,overwrite=True,raster_fallback=False)
     assert out.read_bytes()==before
 
