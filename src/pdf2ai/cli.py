@@ -39,7 +39,7 @@ def select_pages(expression, count):
     return result
 
 
-def publish_report(path, results):
+def publish_report(path, results, *, overwrite=False):
     descriptor, temporary = tempfile.mkstemp(prefix='.pdf2ai-report-', dir=path.parent)
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
@@ -47,7 +47,10 @@ def publish_report(path, results):
             stream.write('\n')
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        if overwrite:
+            os.replace(temporary, path)
+        else:
+            os.link(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -86,11 +89,13 @@ def main(argv=None) -> int:
                 raise ConversionError('レポートの保存先が不正です')
             if args.report and args.report.is_dir():
                 raise ConversionError('レポートの保存先がファイルではなくフォルダーです')
+            if args.report and os.path.lexists(args.report) and not args.overwrite:
+                raise ConversionError(f'Report already exists: {args.report}')
             for source in args.inputs:
                 with pikepdf.open(source) as pdf:
                     numbers = [args.page] if args.page else select_pages(args.pages or 'all', len(pdf.pages))
                 inspected.extend(inspect_document(source, numbers, args.raster_dpi))
-            if args.report: publish_report(args.report, inspected)
+            if args.report: publish_report(args.report, inspected, overwrite=args.overwrite)
         except (ConversionError, pikepdf.PdfError, pikepdf.PasswordError, OSError) as error:
             print(f'ERROR: {error}', file=sys.stderr)
             return 1
@@ -136,6 +141,8 @@ def main(argv=None) -> int:
                 raise ConversionError('レポートの保存先フォルダーが存在しません')
             if args.report.is_dir():
                 raise ConversionError('レポートの保存先がファイルではなくフォルダーです')
+            if os.path.lexists(args.report) and not args.overwrite:
+                raise ConversionError(f'Report already exists: {args.report}')
     except (ConversionError, pikepdf.PdfError, pikepdf.PasswordError, OSError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 1
@@ -163,7 +170,7 @@ def main(argv=None) -> int:
         results.append(report)
     if args.report:
         try:
-            publish_report(args.report, results)
+            publish_report(args.report, results, overwrite=args.overwrite)
         except OSError as exc:
             print(f'ERROR: レポートを保存できませんでした: {exc}', file=sys.stderr)
             return 1

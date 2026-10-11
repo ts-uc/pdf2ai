@@ -57,9 +57,60 @@ def test_report_publish_failure_preserves_previous_file(tmp_path, monkeypatch):
         raise OSError('disk failure')
     monkeypatch.setattr('pdf2ai.cli.os.replace', fail)
     with pytest.raises(OSError):
-        publish_report(path, [{'ok': True}])
+        publish_report(path, [{'ok': True}], overwrite=True)
     assert path.read_text() == 'previous'
     assert not list(tmp_path.glob('.pdf2ai-report-*'))
+
+
+@pytest.mark.parametrize('check', [False, True])
+@pytest.mark.parametrize('overwrite', [False, True])
+def test_cli_existing_report_requires_overwrite(tmp_path, check, overwrite):
+    source = tmp_path/'source.pdf'
+    source_pdf(source)
+    report = tmp_path/'report.json'
+    report.write_text('previous')
+    args = [str(source), '--page', '1', '--report', str(report)]
+    if check:
+        args.append('--check')
+    if overwrite:
+        args.append('--overwrite')
+    assert main(args) == (0 if overwrite else 1)
+    if overwrite:
+        assert json.loads(report.read_text())[0]['page'] == 1
+        assert source.with_suffix('.ai').exists() == (not check)
+    else:
+        assert report.read_text() == 'previous'
+        assert not source.with_suffix('.ai').exists()
+
+
+def test_report_created_during_publication_is_preserved(tmp_path, monkeypatch):
+    path = tmp_path/'report.json'
+    import os
+    real_link = os.link
+
+    def race(source, destination):
+        path.write_text('other writer')
+        return real_link(source, destination)
+
+    monkeypatch.setattr('pdf2ai.cli.os.link', race)
+    with pytest.raises(FileExistsError):
+        publish_report(path, [{'ok': True}])
+    assert path.read_text() == 'other writer'
+    assert not list(tmp_path.glob('.pdf2ai-report-*'))
+
+
+@pytest.mark.parametrize('check', [False, True])
+def test_cli_dangling_report_symlink_is_rejected_before_conversion(tmp_path, check):
+    source = tmp_path/'source.pdf'
+    source_pdf(source)
+    report = tmp_path/'report.json'
+    report.symlink_to(tmp_path/'missing.json')
+    args = [str(source), '--page', '1', '--report', str(report)]
+    if check:
+        args.append('--check')
+    assert main(args) == 1
+    assert report.is_symlink()
+    assert not source.with_suffix('.ai').exists()
 
 
 def test_selected_fallback_uses_original_page_index(tmp_path):
