@@ -6,8 +6,9 @@ from pathlib import Path
 import pikepdf
 
 from .layers import Layer
+from .cancellation import check_cancelled
 from .native import drawing_report, make_private, save_ai
-from .vector import (Clip, ConversionError, Drawing, Gradient, PaintedPath, Raster,
+from .vector import (Clip, ConversionError, Drawing, Gradient, GroupBoundary, PaintedPath, Raster,
                      Subpath, compose, read_drawing)
 
 
@@ -77,7 +78,7 @@ def translate_drawing(drawing, box, page):
 
 
 def convert_document(source, output, *, page_labels=None, pages=None, overwrite=False,
-                     raster_fallback=True, raster_dpi=300):
+                     raster_fallback=True, raster_dpi=300, cancelled=None, progress=None):
     """Convert all pages atomically; a failed page prevents publishing the AI."""
     source, output = Path(source), Path(output)
     if source.resolve() == output.resolve():
@@ -101,6 +102,7 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
             raise ConversionError('Invalid page selection')
         drawings, reports = [], []
         for index, number in enumerate(selected):
+            check_cancelled(cancelled)
             page = pdf.pages[number-1]
             reason = None
             try:
@@ -117,8 +119,27 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
                                     'raster-fallback' if reason else 'vector', reason, raster_dpi, False, 0)
             report['page'] = labels[index]
             reports.append(report)
+            if progress is not None:
+                progress(labels[index],index+1,len(selected))
+        check_cancelled(cancelled)
         boxes = arrange_pages(drawings)
         shifted = [translate_drawing(d, b, p) for d, b, p in zip(drawings, boxes, labels)]
+        combined_model = 'RGB' if any(d.color_model == 'RGB' for d in shifted) else 'CMYK'
+        for drawing,report in zip(shifted,reports):
+            if any(isinstance(i,GroupBoundary) and i.color_model is not None and i.color_model != combined_model
+                   for i in drawing.items):
+                raise ConversionError(f"ページ{report['page']}の透明グループ色空間が結合AIと異なります。ページ別出力を選択してください。")
+            # Choosing an RGB document at merge time also changes the image
+            # destination space, even if the individual page was CMYK.
+            if combined_model == 'RGB':
+                from .color_management import cmyk_to_rgb
+                for image in drawing.images:
+                    if image.model == 'CMYK':
+                        image.pixels = cmyk_to_rgb(image.pixels,image.width,image.height)
+                        image.model = 'RGB'
+                        report['color_conversions'] = [*report['color_conversions'],
+                            'DeviceCMYK image normalized to PDF renderer RGB for combined AI']
+            report['combined_color_model'] = combined_model
         spots = {}
         for drawing in shifted:
             for spot in drawing.spots:
@@ -130,10 +151,11 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
                          [p for d in shifted for p in d.paths], list(spots.values()), {},
                          images=[i for d in shifted for i in d.images],
                          items=[i for d in shifted for i in d.items],
-                         color_model='RGB' if any(d.color_model == 'RGB' for d in shifted) else 'CMYK',
+                         color_model=combined_model,
                          layers=[l for d in shifted for l in d.layers])
         artboards = [(f'Page {p}', box) for p, box in zip(labels, boxes)]
         meta, private = make_private(merged, source.name, artboards=artboards)
+        check_cancelled(cancelled)
         # Preserve the requested order in the PDF representation as well.
         original_pages = list(pdf.pages)
         for number in selected:

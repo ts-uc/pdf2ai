@@ -103,6 +103,23 @@ def test_child_environment_removes_embedded_python_settings(monkeypatch):
     assert environment['PYTHONIOENCODING']=='utf-8'
 
 
+def test_conversion_timeout_reports_partial_output_and_passes_limit(monkeypatch):
+    received=[]
+    def expired(command,timeout=None):
+        received.append(timeout)
+        raise subprocess.TimeoutExpired(command,timeout)
+    monkeypatch.setattr(bridge,'run_child',expired)
+    with pytest.raises(RuntimeError,match='完了済み'):
+        bridge.run_conversion_child(['worker'],2)
+    assert received==[120]
+    with pytest.raises(ValueError):bridge.run_conversion_child(['worker'],-1)
+
+
+def test_run_child_reaps_timed_out_process():
+    with pytest.raises(subprocess.TimeoutExpired):
+        bridge.run_child([sys.executable,'-c','import time; time.sleep(2)'],timeout=.05)
+
+
 def test_outlined_glyph_form_with_reversed_bbox(tmp_path):
     from pdf2ai.native import convert
     from pdf2ai.vector import read_drawing
@@ -160,12 +177,14 @@ def test_checkbox_dialog_and_save_directory(tmp_path,checked,output_mode):
     code=r'''
 import importlib.util,json,sys
 from pathlib import Path
-from PySide6.QtWidgets import QApplication,QCheckBox,QComboBox,QLineEdit,QPushButton,QDialogButtonBox,QFileDialog
+from PySide6.QtWidgets import QApplication,QCheckBox,QComboBox,QLineEdit,QPushButton,QDialogButtonBox,QFileDialog,QSpinBox
 spec=importlib.util.spec_from_file_location('bridge',sys.argv[1])
 bridge=importlib.util.module_from_spec(spec);spec.loader.exec_module(bridge)
 app=QApplication(['test'])
 document=Path(sys.argv[2])/'original.sla'
 dialog=bridge.build_export_dialog(str(document),4,2)
+assert dialog.findChild(QSpinBox,'timeout_minutes').value()==0
+dialog.findChild(QSpinBox,'timeout_minutes').setValue(7)
 checkbox=dialog.findChild(QCheckBox,'write_report')
 assert not checkbox.isChecked()
 expected=str(document.with_suffix('.ai'))
@@ -189,7 +208,7 @@ print(json.dumps(dialog.export_options))
     result=subprocess.run([sys.executable,'-c',code,str(SCRIPT),str(tmp_path),str(checked),output_mode],env=env,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
     assert json.loads(result.stdout)=={'pages':[2],'output':str(tmp_path/'original.ai'),'write_report':checked,'output_mode':output_mode,
-                                      'strict':False,'dpi':300,'bleeds':False,'crop_marks':False}
+                                      'strict':False,'dpi':300,'bleeds':False,'crop_marks':False,'timeout_minutes':7}
 
 
 def test_combined_worker_preserves_all_pdf_pages_and_native_artboards(tmp_path):

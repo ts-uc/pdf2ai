@@ -9,6 +9,7 @@ except ImportError as exc:
     raise SystemExit("GUIにはTkinterが必要です。READMEのインストール手順を確認してください。CLI版はTkinterなしで使用できます。") from exc
 from .native import convert
 from .vector import ConversionError
+from .cancellation import ConversionCancelled
 from .multiboard import convert_document
 from .cli import select_pages, publish_report
 import pikepdf
@@ -110,15 +111,19 @@ def main():
                 try:
                     if combined:
                         batch = convert_document(p,out,pages=selection,overwrite=overwrite,
-                                                 raster_fallback=not strict_selected,raster_dpi=resolution)
+                                                 raster_fallback=not strict_selected,raster_dpi=resolution,
+                                                 cancelled=cancelled.is_set,
+                                                 progress=lambda page,done,total: messages.put(f'処理済み: {done}/{total}ページ（元ページ{page}）'))
                     else:
                         batch = [convert(p,out,page_number=selection,overwrite=overwrite,outline_text=outline_selected,
-                                         raster_fallback=not strict_selected,raster_dpi=resolution)]
+                                         raster_fallback=not strict_selected,raster_dpi=resolution,cancelled=cancelled.is_set)]
                     reports.extend(batch)
                     report = batch[0]
                     for item in batch:
                         if item['rasterized']: messages.put(f"画像化して保存（{resolution:g}dpi）: page {item['page']}: {item['fallback_reason']}")
                     messages.put(f"保存: {out}（特色{len(report['spots'])}色）")
+                except ConversionCancelled as error:
+                    messages.put(str(error));break
                 except Exception as error:
                     reports.append({'input':str(p),'output':str(out),'error':str(error)})
                     messages.put(f"エラー: {p.name}: {error}")
@@ -129,7 +134,7 @@ def main():
         threading.Thread(target=work,daemon=True).start()
 
     start = ttk.Button(frame,text="変換",command=run);start.pack(anchor="e",pady=8)
-    ttk.Button(frame,text='次のファイル／ページからキャンセル',command=cancelled.set).pack(anchor='e')
+    ttk.Button(frame,text='キャンセル（処理境界で停止）',command=cancelled.set).pack(anchor='e')
     def poll():
         try:
             while True:

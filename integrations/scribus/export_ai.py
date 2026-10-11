@@ -151,6 +151,11 @@ def build_export_dialog(document, count, current):
     dpi.setRange(72, 1200)
     dpi.setValue(int(RASTER_DPI))
     layout.addWidget(dpi)
+    layout.addWidget(QLabel('変換の制限時間（分。0は制限なし）'))
+    timeout = QSpinBox()
+    timeout.setObjectName('timeout_minutes')
+    timeout.setRange(0,1440)
+    layout.addWidget(timeout)
     bleeds = QCheckBox('文書の裁ち落としを含める')
     bleeds.setObjectName('bleeds')
     layout.addWidget(bleeds)
@@ -180,13 +185,23 @@ def build_export_dialog(document, count, current):
             return
         dialog.export_options = {'pages': selected, 'output': chosen, 'write_report': report.isChecked(),
                                  'output_mode': output_mode.currentData(), 'strict': strict.isChecked(),
-                                 'dpi': dpi.value(), 'bleeds': bleeds.isChecked(), 'crop_marks': marks.isChecked()}
+                                 'dpi': dpi.value(), 'bleeds': bleeds.isChecked(), 'crop_marks': marks.isChecked(),
+                                 'timeout_minutes': timeout.value()}
         dialog.accept()
 
     browse.clicked.connect(choose_file)
     buttons.accepted.connect(accept)
     buttons.rejected.connect(dialog.reject)
     return dialog
+
+
+def run_conversion_child(command, minutes=0):
+    if type(minutes) is not int or not 0 <= minutes <= 1440:
+        raise ValueError('変換の制限時間は0〜1440分で指定してください。')
+    try:
+        return run_child(command, timeout=minutes*60 if minutes else None)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError('変換の制限時間を超えたため停止しました。ページ別出力では完了済みのAIが残る場合があります。') from error
 
 
 def export_dialog(document, count, current):
@@ -324,7 +339,8 @@ def scribus_main(scribus):
             request_path.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
             scribus.progressSet(1)
             scribus.statusMessage('AI書き出し：{}ページを変換しています…'.format(len(pages)))
-            result = run_child([python, str(Path(__file__).resolve()), '--worker', str(request_path)])
+            result = run_conversion_child([python, str(Path(__file__).resolve()), '--worker', str(request_path)],
+                                          options.get('timeout_minutes',0))
             if result.returncode not in (0, 1):
                 raise RuntimeError((result.stderr or result.stdout or '変換処理を開始できませんでした。').strip()[-2000:])
             summary = json.loads(result.stdout)

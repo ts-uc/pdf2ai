@@ -431,6 +431,17 @@ def outline_straight_strokes(paths, state):
     return result
 
 
+def image_samples(image, width, height, channels, bits):
+    """Unpack row-padded PDF samples without interpreting color or Decode."""
+    raw = image.read_bytes()
+    stride = (width*channels*bits+7)//8
+    if len(raw) != stride*height:
+        raise ConversionError('Invalid image sample length')
+    maximum = (1<<bits)-1
+    return bytes((raw[y*stride+i*bits//8] >> (8-bits-i*bits%8)) & maximum
+                 for y in range(height) for i in range(width*channels))
+
+
 def read_image(image, state: State, *, color_space=None) -> Raster:
     if str(image.get("/Subtype")) != "/Image":
         raise ConversionError("Expected an image XObject after Form expansion")
@@ -452,7 +463,7 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
         base = pikepdf.Name(model_name)
     model = {"/DeviceRGB": "RGB", "/DeviceCMYK": "CMYK", "/DeviceGray": "Gray"}.get(str(base))
     bits = int(image.get('/BitsPerComponent',0))
-    if model is None or bits not in (1,2,4,8,16) or (indexed and bits==16) or (not indexed and model != 'Gray' and bits not in (8,16)):
+    if model is None or bits not in (1,2,4,8,16) or (indexed and bits==16):
         raise ConversionError("Unsupported image color space or bit depth")
     width,height = int(image.Width),int(image.Height)
     if width <= 0 or height <= 0 or width*height > 40_000_000:
@@ -506,9 +517,28 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
     if profile is not None:
         image['/ColorSpace'] = pikepdf.Array([space[0],base,space[2],space[3]]) if indexed else base
     try:
-        decoded = pikepdf.PdfImage(image).as_pil_image() if bits!=16 else None
+        decoded = pikepdf.PdfImage(image).as_pil_image() if bits==8 and not indexed else None
         mode = {'RGB':'RGB','CMYK':'CMYK','Gray':'L'}[model]
-        if bits==16:
+        channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
+        samples = None
+        if indexed:
+            samples = image_samples(image,width,height,1,bits)
+            maximum = (1<<bits)-1
+            high = int(space[2])
+            if not 0 <= high <= 255: raise ConversionError('Invalid Indexed palette limit')
+            limits = tuple(map(float,decode)) if decode is not None else (0,maximum)
+            if len(limits)!=2 or not all(math.isfinite(v) for v in limits):
+                raise ConversionError('Invalid Indexed image Decode')
+            lookup = space[3]
+            palette = lookup.read_bytes() if isinstance(lookup,pikepdf.Stream) else bytes(lookup)
+            if len(palette)<(high+1)*channels: raise ConversionError('Invalid Indexed palette length')
+            mapped = [max(0,min(high,math.floor(limits[0]+(limits[1]-limits[0])*v/maximum+0.5))) for v in range(maximum+1)]
+            colors = [palette[i*channels:(i+1)*channels] for i in mapped]
+            pixels = bytes(component for sample in samples for component in colors[sample])
+        elif bits<8:
+            samples = image_samples(image,width,height,channels,bits)
+            pixels = bytes(round(v*255/((1<<bits)-1)) for v in samples)
+        elif bits==16:
             channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
             raw=image.read_bytes()
             if len(raw)!=width*height*channels*2: raise ConversionError("Invalid 16-bit image sample length")
@@ -518,16 +548,21 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
             if decoded.mode != mode: raise ConversionError("Unexpected decoded image color model")
             pixels = decoded.tobytes()
         mask_pixels = pixels
-        if decode is not None:
-            if indexed: raise ConversionError("Indexed image Decode is unsupported")
+        if decode is not None and not indexed:
             from PIL import Image
             channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
             limits = tuple(map(float,decode))
             if len(limits)!=2*channels or not all(math.isfinite(v) and 0<=v<=1 for v in limits):
                 raise ConversionError("Invalid image Decode")
-            image_pixels = Image.frombytes(mode,(width,height),pixels)
-            tables = [round(255*(limits[2*c]+(limits[2*c+1]-limits[2*c])*i/255)) for c in range(channels) for i in range(256)]
-            pixels = image_pixels.point(tables).tobytes()
+            if samples is not None:
+                maximum = (1<<bits)-1
+                tables = [[round(255*(limits[2*c]+(limits[2*c+1]-limits[2*c])*i/maximum))
+                           for i in range(maximum+1)] for c in range(channels)]
+                pixels = bytes(tables[i%channels][v] for i,v in enumerate(samples))
+            else:
+                image_pixels = Image.frombytes(mode,(width,height),pixels)
+                tables = [round(255*(limits[2*c]+(limits[2*c+1]-limits[2*c])*i/255)) for c in range(channels) for i in range(256)]
+                pixels = image_pixels.point(tables).tobytes()
     finally:
         if profile is not None: image['/ColorSpace'] = original_space
         if mask is not None: image['/SMask'] = mask
@@ -558,12 +593,13 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
             if len(raw)!=stride*height:raise ConversionError('Invalid Indexed image sample length')
             alpha=bytes(0 if limits[0]<=((raw[y*stride+x*bits//8]>>(8-bits-x*bits%8))&maximum)<=limits[1] else 255
                         for y in range(height) for x in range(width))
-        elif isinstance(hard_mask,pikepdf.Array) and bits==8:
+        elif isinstance(hard_mask,pikepdf.Array) and bits in (1,2,4,8):
             channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
             limits = list(map(int,hard_mask))
-            if len(limits)!=2*channels or any(not 0<=v<=255 for v in limits) or any(limits[i]>limits[i+1] for i in range(0,len(limits),2)):
+            if len(limits)!=2*channels or any(not 0<=v<=(1<<bits)-1 for v in limits) or any(limits[i]>limits[i+1] for i in range(0,len(limits),2)):
                 raise ConversionError("Invalid color-key mask")
-            alpha = bytes(0 if all(limits[2*c]<=mask_pixels[i+c]<=limits[2*c+1] for c in range(channels)) else 255 for i in range(0,len(pixels),channels))
+            original_samples = samples if samples is not None else mask_pixels
+            alpha = bytes(0 if all(limits[2*c]<=original_samples[i+c]<=limits[2*c+1] for c in range(channels)) else 255 for i in range(0,len(pixels),channels))
         else: raise ConversionError("Unsupported hard image mask")
     channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
     if len(pixels) != width*height*channels or (alpha is not None and len(alpha) != width*height):

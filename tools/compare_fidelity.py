@@ -16,9 +16,13 @@ def render(path):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('folder',type=Path)
+    parser.add_argument('--cases',nargs='+',help='Compare only the named PDF stems')
+    parser.add_argument('--report',default='visual-results.json',help='Report filename within the case folder')
     args=parser.parse_args()
     results=[]
     for original in sorted(args.folder.glob('*.pdf')):
+        if args.cases is not None and original.stem not in args.cases:
+            continue
         saved=args.folder/'illustrator'/original.name
         if not saved.exists():
             results.append({'case':original.stem,'error':'No Illustrator PDF'})
@@ -37,7 +41,10 @@ def main():
                 draw.text((x*a.width+5,5),label,fill='black')
             image.save(args.folder/(original.stem+'-comparison.png'))
         results.append(row)
-    (args.folder/'visual-results.json').write_text(json.dumps(results,indent=2))
+    if args.cases is not None:
+        for missing in sorted(set(args.cases)-{r['case'] for r in results}):
+            results.append({'case':missing,'error':'No original PDF'})
+    (args.folder/args.report).write_text(json.dumps(results,indent=2))
     for r in results:
         print(r['case'],r.get('mean_absolute_error',r.get('error')),r.get('pixels_difference_over_16'))
 
