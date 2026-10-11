@@ -3,7 +3,7 @@
 
 Scribusの「スクリプト → スクリプトを実行」でこのファイルを選択します。
 文字はパス化し、特色・レイヤーを含む一時PDFを既存の変換エンジンへ渡します。
-複数ページはページごとのAIになり、未対応機能は標準で自動画像化します。
+複数ページは1つのAIまたはページ別のAIを選択でき、未対応機能は標準で自動画像化します。
 Scribus内のPythonには追加パッケージを入れず、外部Pythonの仮想環境を使用します。
 """
 import argparse
@@ -44,7 +44,9 @@ def parse_pages(value, count, current):
     return sorted(selected)
 
 
-def output_paths(base, pages):
+def output_paths(base, pages, output_mode='separate'):
+    if output_mode not in ('combined', 'separate'):
+        raise ValueError('書き出し方法は combined / separate のいずれかを指定してください。')
     base = Path(base)
     if not base.suffix:
         base = base.with_suffix('.ai')
@@ -52,7 +54,7 @@ def output_paths(base, pages):
         raise ValueError('出力ファイルの拡張子は .ai にしてください。')
     if not base.parent.is_dir():
         raise ValueError('出力先フォルダーが存在しません。')
-    outputs = [base] if len(pages) == 1 else [base.with_name('{}_{:03d}.ai'.format(base.stem, p)) for p in pages]
+    outputs = [base] if len(pages) == 1 or output_mode == 'combined' else [base.with_name('{}_{:03d}.ai'.format(base.stem, p)) for p in pages]
     return outputs, base.with_suffix('.report.json')
 
 
@@ -109,7 +111,7 @@ def build_export_dialog(document, count, current):
     # Run Qt in the external Python process, independently of Scribus's Qt.
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                                  QLineEdit, QCheckBox, QPushButton,
+                                  QLineEdit, QCheckBox, QComboBox, QPushButton,
                                   QDialogButtonBox, QFileDialog, QMessageBox)
     dialog = QDialog()
     dialog.setWindowTitle('AI書き出し')
@@ -121,6 +123,12 @@ def build_export_dialog(document, count, current):
     pages = QLineEdit('all')
     pages.setObjectName('pages')
     layout.addWidget(pages)
+    layout.addWidget(QLabel('書き出し方法'))
+    output_mode = QComboBox()
+    output_mode.setObjectName('output_mode')
+    output_mode.addItem('ページ別のAIファイル', 'separate')
+    output_mode.addItem('対象ページを1つのAIファイルにまとめる', 'combined')
+    layout.addWidget(output_mode)
     layout.addWidget(QLabel('保存先'))
     row = QHBoxLayout()
     destination = QLineEdit(str(default_output(document)))
@@ -150,11 +158,12 @@ def build_export_dialog(document, count, current):
             chosen = destination.text().strip()
             if not chosen:
                 raise ValueError('保存先を指定してください。')
-            output_paths(chosen, selected)
+            output_paths(chosen, selected, output_mode.currentData())
         except ValueError as error:
             QMessageBox.warning(dialog, 'AI書き出し', str(error))
             return
-        dialog.export_options = {'pages': selected, 'output': chosen, 'write_report': report.isChecked()}
+        dialog.export_options = {'pages': selected, 'output': chosen, 'write_report': report.isChecked(),
+                                 'output_mode': output_mode.currentData()}
         dialog.accept()
 
     browse.clicked.connect(choose_file)
@@ -199,7 +208,8 @@ def convert_export(request):
     dpi = float(request.get('dpi', RASTER_DPI))
     if not math.isfinite(dpi) or not 72 <= dpi <= 1200:
         raise ValueError('Raster DPI must be between 72 and 1200')
-    outputs, report_path = output_paths(request['output'], pages)
+    output_mode = request.get('output_mode', 'separate')
+    outputs, report_path = output_paths(request['output'], pages, output_mode)
     write_report = bool(request.get('write_report', False))
     destinations = outputs + ([report_path] if write_report else [])
     overwrite = bool(request.get('overwrite', False))
@@ -213,7 +223,17 @@ def convert_export(request):
         if len(pdf.pages) != len(pages):
             raise ValueError('ScribusのPDFページ数が対象ページ数と一致しません。')
     results = []
-    for index, (page, output) in enumerate(zip(pages, outputs), 1):
+    if output_mode == 'combined':
+        from pdf2ai.multiboard import convert_document
+        try:
+            results = convert_document(source, outputs[0], page_labels=pages, overwrite=overwrite,
+                                       raster_fallback=not request.get('strict', STRICT), raster_dpi=dpi)
+            for report in results:
+                report['input'] = request.get('document', 'Scribus document')
+                report['output'] = outputs[0].name
+        except Exception as error:
+            results = [{'page': page, 'output': outputs[0].name, 'error': str(error)} for page in pages]
+    for index, (page, output) in enumerate(zip(pages, outputs) if output_mode == 'separate' else [], 1):
         try:
             report = convert(source, output, page_number=index, overwrite=overwrite,
                              raster_fallback=not request.get('strict', STRICT), raster_dpi=dpi)
@@ -223,7 +243,7 @@ def convert_export(request):
         except Exception as error:
             report = {'page': page, 'output': output.name, 'error': str(error)}
         results.append(report)
-    summary = {'document': request.get('document', 'Scribus document'), 'results': results}
+    summary = {'document': request.get('document', 'Scribus document'), 'output_mode': output_mode, 'results': results}
     if not write_report:
         return summary
     # Publish the report without truncating a previous file on failure/races.
@@ -258,7 +278,8 @@ def scribus_main(scribus):
         return
     pages, chosen = options['pages'], options['output']
     write_report = options['write_report']
-    outputs, report_path = output_paths(chosen, pages)
+    output_mode = options.get('output_mode', 'separate')
+    outputs, report_path = output_paths(chosen, pages, output_mode)
     existing = [p for p in outputs + ([report_path] if write_report else []) if p.exists()]
     overwrite = False
     if existing:
@@ -277,7 +298,7 @@ def scribus_main(scribus):
             export_pdf(scribus, pdf, pages)
             request = {'pdf': str(pdf), 'pages': pages, 'output': str(Path(chosen)),
                        'overwrite': overwrite, 'strict': STRICT, 'dpi': RASTER_DPI, 'document': document.name,
-                       'write_report': write_report}
+                       'write_report': write_report, 'output_mode': output_mode}
             request_path = directory / 'request.json'
             request_path.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
             scribus.progressSet(1)
@@ -289,6 +310,7 @@ def scribus_main(scribus):
         errors = [r for r in summary['results'] if 'error' in r]
         rasterized = [r for r in summary['results'] if r.get('rasterized')]
         lines = ['保存：{} / 成功{}ページ'.format(outputs[0].parent, len(pages) - len(errors))]
+        lines.append('書き出し方法：' + ('1つのAIファイル（' + outputs[0].name + '）' if output_mode == 'combined' else 'ページ別のAIファイル'))
         if write_report:
             lines.append('レポート：' + report_path.name)
         if rasterized:

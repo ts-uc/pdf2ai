@@ -33,11 +33,11 @@ Keep the downloaded project folder together; use the script from its original lo
 1. Open the document you want to export in Scribus. / 書き出したい文書を Scribus で開きます。
 2. Choose **Script → Execute Script** and select [`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py). / **スクリプト → スクリプトを実行**から同ファイルを選びます。
 3. Choose the pages: `all` for all pages, `current` for the current page, or `1,3-5` for specific pages. / 対象ページを入力します。`all` は全ページ、`current` は現在のページ、`1,3-5` は指定ページです。
-4. Choose the output folder and filename, then click **書き出し** (Export). / 保存先とファイル名を指定し、**書き出し**を押します。
+4. Choose **ページ別のAIファイル** (separate files) or **対象ページを1つのAIファイルにまとめる** (one file), select the output filename, then click **書き出し** (Export). / **書き出し方法**でページ別または1つのAIにまとめる方法を選び、保存先とファイル名を指定して**書き出し**を押します。
 
-Each page is saved as a separate AI file. For multiple pages, filenames include the original page number, such as `design_001.ai`. Next time, you can select the script from Scribus's recent scripts.
+Separate output saves each page in an AI file, with original page numbers such as `design_001.ai`. Combined output saves the selected pages as separate artboards in a single `design.ai`. Next time, you can select the script from Scribus's recent scripts.
 
-1 ページにつき 1 つの AI ファイルを保存します。複数ページの場合は、`design_001.ai` のように元のページ番号が付きます。次回からは Scribus の最近使ったスクリプトから実行できます。
+ページ別出力では、複数ページのファイル名に`design_001.ai`のように元のページ番号が付きます。まとめる場合は、選択した各ページを独立したアートボードとして1つの`design.ai`に保存します。初期設定はページ別です。次回からは Scribus の最近使ったスクリプトから実行できます。
 
 To use DIC colors, register them as **spot colors** in Scribus. Names such as `DIC 1` and `DIC 4` are also accepted and exported as the corresponding DIC Lab swatches.
 

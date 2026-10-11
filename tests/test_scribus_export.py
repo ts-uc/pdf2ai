@@ -146,12 +146,13 @@ def test_default_output_uses_original_document_directory(tmp_path,monkeypatch):
 
 
 @pytest.mark.parametrize('checked',[False,True])
-def test_checkbox_dialog_and_save_directory(tmp_path,checked):
+@pytest.mark.parametrize('output_mode',['separate','combined'])
+def test_checkbox_dialog_and_save_directory(tmp_path,checked,output_mode):
     pytest.importorskip('PySide6.QtWidgets')
     code=r'''
 import importlib.util,json,sys
 from pathlib import Path
-from PySide6.QtWidgets import QApplication,QCheckBox,QLineEdit,QPushButton,QDialogButtonBox,QFileDialog
+from PySide6.QtWidgets import QApplication,QCheckBox,QComboBox,QLineEdit,QPushButton,QDialogButtonBox,QFileDialog
 spec=importlib.util.spec_from_file_location('bridge',sys.argv[1])
 bridge=importlib.util.module_from_spec(spec);spec.loader.exec_module(bridge)
 app=QApplication(['test'])
@@ -170,10 +171,61 @@ next(b for b in dialog.findChildren(QPushButton) if b.text()=='参照…').click
 assert calls==[expected]
 dialog.findChild(QLineEdit,'pages').setText('current')
 checkbox.setChecked(sys.argv[3]=='True')
+mode=dialog.findChild(QComboBox,'output_mode')
+assert mode.currentData()=='separate'
+mode.setCurrentIndex(mode.findData(sys.argv[4]))
 dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.StandardButton.Ok).click()
 print(json.dumps(dialog.export_options))
 '''
     env=bridge.child_environment();env['QT_QPA_PLATFORM']='offscreen'
-    result=subprocess.run([sys.executable,'-c',code,str(SCRIPT),str(tmp_path),str(checked)],env=env,capture_output=True,text=True)
+    result=subprocess.run([sys.executable,'-c',code,str(SCRIPT),str(tmp_path),str(checked),output_mode],env=env,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
-    assert json.loads(result.stdout)=={'pages':[2],'output':str(tmp_path/'original.ai'),'write_report':checked}
+    assert json.loads(result.stdout)=={'pages':[2],'output':str(tmp_path/'original.ai'),'write_report':checked,'output_mode':output_mode}
+
+
+def test_combined_worker_preserves_all_pdf_pages_and_native_artboards(tmp_path):
+    import pymupdf
+    from pdf2ai.native import read_private
+    source=tmp_path/'input.pdf';selected_pdf(source)
+    base=tmp_path/'全ページ.ai'
+    request={'pdf':str(source),'pages':[2,4],'output':str(base),'output_mode':'combined','write_report':True}
+    summary=bridge.convert_export(request)
+    assert summary['output_mode']=='combined'
+    assert [r['page'] for r in summary['results']]==[2,4]
+    assert all(r['output']==base.name and 'error' not in r for r in summary['results'])
+    with pikepdf.open(base) as pdf:
+        assert len(pdf.pages)==2
+        assert pdf.pages[0].obj.PieceInfo.objgen==pdf.pages[1].obj.PieceInfo.objgen
+        private=read_private(pdf)
+        assert private.count(b'/String (ArtboardUUID)')==2
+        for r in summary['results']:
+            x0,y0,x1,y1=r['artboard_box']
+            a,b,c,d=r['page_box']
+            assert (x1-x0,y1-y0)==pytest.approx((c-a,d-b))
+    with pymupdf.open(source) as original,pymupdf.open(base) as output:
+        for a,b in zip(original,output):
+            assert a.get_pixmap().samples==b.get_pixmap().samples
+    before=base.read_bytes()
+    with pytest.raises(FileExistsError):bridge.convert_export(request)
+    assert base.read_bytes()==before and not (tmp_path/'全ページ_002.ai').exists()
+
+
+def test_combined_mixed_fallback_and_strict_is_atomic(tmp_path):
+    source=tmp_path/'input.pdf'
+    with pikepdf.open(ROOT/'sample'/'conversion_fallback.pdf') as pdf:
+        while len(pdf.pages)>1:del pdf.pages[-1]
+        with pikepdf.open(ROOT/'sample'/'conversion_pages.pdf') as native:
+            pdf.pages.insert(0,native.pages[0])
+        pdf.save(source)
+    base=tmp_path/'mixed.ai'
+    request={'pdf':str(source),'pages':[3,7],'output':str(base),'output_mode':'combined','dpi':72}
+    results=bridge.convert_export(request)['results']
+    assert [r['rasterized'] for r in results]==[False,True]
+    request.update(strict=True,overwrite=True)
+    previous=base.read_bytes()
+    results=bridge.convert_export(request)['results']
+    assert all('error' in r for r in results) and base.read_bytes()==previous
+
+
+def test_unknown_output_mode_is_rejected(tmp_path):
+    with pytest.raises(ValueError):bridge.output_paths(tmp_path/'a.ai',[1,2],'other')

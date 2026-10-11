@@ -99,7 +99,7 @@ def layer_runs(drawing):
     return result
 
 
-def make_private(drawing: Drawing, title: str) -> tuple[bytes, bytes]:
+def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes, bytes]:
     runs = layer_runs(drawing)
     x0,y0,x1,y1 = drawing.box
     box = " ".join(num(v) for v in drawing.box)
@@ -138,15 +138,22 @@ def make_private(drawing: Drawing, title: str) -> tuple[bytes, bytes]:
         body += ['BD','%AI5_EndGradient']
     body += ["%AI9_BeginDocumentData",
              "%_/Document :", "%_/Dictionary :", "%_16383 /Int (AIDocumentCanvasSize) ,",
-             "%_/Array :", "%_/Dictionary :", "%_1 /Bool (IsArtboardDefaultName) ,",
+             "%_/Array :"]
+    for name, (ax0, ay0, ax1, ay1) in artboards or [('Artboard 1', drawing.box)]:
+        body += ["%_/Dictionary :", "%_0 /Bool (IsArtboardDefaultName) ,",
              "%_0 /Bool (IsArtboardSelected) ,", "%_0 /Bool (IsArtboardLocked) ,",
-             f"%_{num(x0)} {num(y1)} /RealPointRelToROrigin", "%_ (PositionPoint1) ,",
-             f"%_{num(x1)} {num(y0)} /RealPointRelToROrigin", "%_ (PositionPoint2) ,",
+             "%_/FillStyle : 0 1 0 0 0 Xy", "%_0 J 0 j 1 w 10 M []0 d",
+             "%_0 XR", "%_0 0 Xd", "%_/Def ;", "%_ (EachArtboardColor) ,",
+             "%_8191 8191 /RealPoint", "%_ (RulerOrigin) ,",
+             f"%_{num(ax0)} {num(ay1)} /RealPointRelToROrigin", "%_ (PositionPoint1) ,",
+             f"%_{num(ax1)} {num(ay0)} /RealPointRelToROrigin", "%_ (PositionPoint2) ,",
              "%_1 /Real (PAR) ,", "%_0 /Int (DisplayMark) ,",
-             "%_(Artboard 1) /UnicodeString (Name) ,",
+             f"%_{ps_string(name)} /UnicodeString (Name) ,",
              f"%_{ps_string(str(uuid.uuid4()))} /String (ArtboardUUID) ,",
-             "%_; ,", "%_; (ArtboardArray) ,", "%_0 /Int (CropAreaActive) ,",
-             "%_;", "%_;", "%AI9_EndDocumentData", "%%EndSetup"]
+             "%_; ,"]
+    body += ["%_; (ArtboardArray) ,", "%_0 /Int (CropAreaActive) ,",
+             "%_; /Recorded ,", "%_/Dictionary : /NotRecorded ,",
+             "%_; /NotRecorded ,", "%_;", "%AI9_EndDocumentData", "%%EndSetup"]
     layer_boundaries = {}
     all_items = []
     for layer,name,items in runs:
@@ -298,41 +305,54 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
         for i in range(len(pdf.pages)-1,-1,-1):
             if i != index: del pdf.pages[i]
         page = pdf.pages[0]
-        compressed = MARKER+compress(private)
-        chunks = [compressed[i:i+65536] for i in range(0,len(compressed),65536)]
-        dictionary = pikepdf.Dictionary(ContainerVersion=12, CreatorVersion=24,
-                                        RoundtripVersion=24, RoundtripStreamType=2,
-                                        AIMetaData=pdf.make_stream(meta))
-        if len(chunks)>1: dictionary.NumBlock = len(chunks)
-        for i,chunk in enumerate(chunks,1): dictionary[f"/AIPrivateData{i}"] = pdf.make_stream(chunk)
-        timestamp = datetime.now(timezone.utc).strftime("D:%Y%m%d%H%M%SZ")
-        piece = page.obj.get("/PieceInfo", pikepdf.Dictionary())
-        piece.Illustrator = pikepdf.Dictionary(LastModified=pikepdf.String(timestamp),Private=dictionary)
-        page.obj.PieceInfo = piece
-        pdf.docinfo["/Creator"] = AI_CREATOR
-        pdf.docinfo["/Producer"] = AI_PRODUCER
-        # Do not claim PDF/X certification for a newly written file without preflight.
-        for key in ("/GTS_PDFXVersion", "/GTS_PDFXConformance"):
-            if key in pdf.docinfo: del pdf.docinfo[key]
-        with pdf.open_metadata(set_pikepdf_as_editor=False, update_docinfo=False) as metadata:
-            metadata["xmp:CreatorTool"] = AI_CREATOR
-            metadata["pdf:Producer"] = AI_PRODUCER
-            for key in ("pdfxid:GTS_PDFXVersion", "pdfx:GTS_PDFXVersion", "pdfx:GTS_PDFXConformance"):
-                if key in metadata: del metadata[key]
-        fd,temporary = tempfile.mkstemp(prefix=".pdf2ai-",suffix=".ai",dir=output.parent)
-        os.close(fd)
-        try:
-            pdf.save(temporary, min_version="1.6", compress_streams=True)
-            with pikepdf.open(temporary) as check:
-                if read_private(check) != private: raise ConversionError("Private-stream verification failed")
-            # Hard-link publication fails atomically if an output appeared during
-            # conversion. Windows, macOS and Linux support same-directory links.
-            if overwrite: os.replace(temporary,output)
-            else:
-                os.link(temporary,output)
-                os.unlink(temporary)
-        finally:
-            if os.path.exists(temporary): os.unlink(temporary)
+        private_blocks = save_ai(pdf, output, meta, private, overwrite=overwrite)
+    return drawing_report(drawing, source, output, index, conversion_mode, fallback_reason, raster_dpi, outline_text, private_blocks)
+
+
+def save_ai(pdf, output, meta, private, *, overwrite=False):
+    """Attach one shared editing stream to every PDF page and publish atomically."""
+    page = pdf.pages[0]
+    compressed = MARKER+compress(private)
+    chunks = [compressed[i:i+65536] for i in range(0,len(compressed),65536)]
+    dictionary = pikepdf.Dictionary(ContainerVersion=12, CreatorVersion=24,
+                                    RoundtripVersion=24, RoundtripStreamType=2,
+                                    AIMetaData=pdf.make_stream(meta))
+    if len(chunks)>1: dictionary.NumBlock = len(chunks)
+    for i,chunk in enumerate(chunks,1): dictionary[f"/AIPrivateData{i}"] = pdf.make_stream(chunk)
+    timestamp = datetime.now(timezone.utc).strftime("D:%Y%m%d%H%M%SZ")
+    piece = page.obj.get("/PieceInfo", pikepdf.Dictionary())
+    piece.Illustrator = pikepdf.Dictionary(LastModified=pikepdf.String(timestamp),Private=dictionary)
+    shared_piece = pdf.make_indirect(piece)
+    for page in pdf.pages:
+        page.obj.PieceInfo = shared_piece
+    pdf.docinfo["/Creator"] = AI_CREATOR
+    pdf.docinfo["/Producer"] = AI_PRODUCER
+    # Do not claim PDF/X certification for a newly written file without preflight.
+    for key in ("/GTS_PDFXVersion", "/GTS_PDFXConformance"):
+        if key in pdf.docinfo: del pdf.docinfo[key]
+    with pdf.open_metadata(set_pikepdf_as_editor=False, update_docinfo=False) as metadata:
+        metadata["xmp:CreatorTool"] = AI_CREATOR
+        metadata["pdf:Producer"] = AI_PRODUCER
+        for key in ("pdfxid:GTS_PDFXVersion", "pdfx:GTS_PDFXVersion", "pdfx:GTS_PDFXConformance"):
+            if key in metadata: del metadata[key]
+    fd,temporary = tempfile.mkstemp(prefix=".pdf2ai-",suffix=".ai",dir=output.parent)
+    os.close(fd)
+    try:
+        pdf.save(temporary, min_version="1.6", compress_streams=True)
+        with pikepdf.open(temporary) as check:
+            if read_private(check) != private: raise ConversionError("Private-stream verification failed")
+        # Hard-link publication fails atomically if an output appeared during
+        # conversion. Windows, macOS and Linux support same-directory links.
+        if overwrite: os.replace(temporary,output)
+        else:
+            os.link(temporary,output)
+            os.unlink(temporary)
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
+    return len(chunks)
+
+
+def drawing_report(drawing, source, output, index, conversion_mode, fallback_reason, raster_dpi, outline_text, private_blocks):
     return {"input":str(source),"output":str(output),"format":"Illustrator 2020 (24), experimental",
             "layers":[{"name":name,"visible":layer.visible if layer else True,"locked":layer.locked if layer else False,"printable":layer.printable if layer else True} for layer,name,_ in layer_runs(drawing)],
             "conversion_mode":conversion_mode,"rasterized":conversion_mode=='raster-fallback',
@@ -348,4 +368,4 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
             "color_model":drawing.color_model,
             "clipping_paths":sum(len(c.paths) for item in native_items(drawing) for c in item.state.clips),
             "spots":[{"name":s.name,"alternate_space":"Lab" if s.lab is not None else "CMYK","values":list(s.lab if s.lab is not None else s.cmyk)} for s in drawing.spots],
-            "pdf_operators":drawing.operators,"private_blocks":len(chunks)}
+            "pdf_operators":drawing.operators,"private_blocks":private_blocks}
