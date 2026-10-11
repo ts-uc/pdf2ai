@@ -450,10 +450,17 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
     if image.get("/Matte") is not None:
         raise ConversionError("Custom image Matte is unsupported")
     space = color_space if color_space is not None else image.get('/ColorSpace')
+    if isinstance(space,pikepdf.Array) and not len(space):
+        raise ConversionError('Invalid image color space array')
     indexed = isinstance(space,pikepdf.Array) and str(space[0]) == '/Indexed'
+    if indexed and len(space)!=4:
+        raise ConversionError('Invalid Indexed image color space array')
     base = space[1] if indexed else space
     profile = None
+    if isinstance(base,pikepdf.Array) and not len(base):
+        raise ConversionError('Invalid image base color space array')
     if isinstance(base,pikepdf.Array) and str(base[0]) == '/ICCBased':
+        if len(base)!=2:raise ConversionError('Invalid ICC image color space array')
         profile = base[1]
         if not isinstance(profile,pikepdf.Stream):raise ConversionError('Invalid ICC profile stream')
         model_name = {1:'/DeviceGray',3:'/DeviceRGB',4:'/DeviceCMYK'}.get(int(profile.get('/N',0)))
@@ -504,8 +511,12 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
         finally:
             if mask_decode is not None: mask['/Decode'] = mask_decode
         if mask_decode is not None:
-            table = bytes(round(255*(limits[0]+(limits[1]-limits[0])*i/255)) for i in range(256))
-            alpha = alpha.translate(table)
+            if mask_bits == 16:
+                alpha = bytes(round(255*(limits[0]+(limits[1]-limits[0])*int.from_bytes(raw[i:i+2],'big')/65535))
+                              for i in range(0,len(raw),2))
+            else:
+                table = bytes(round(255*(limits[0]+(limits[1]-limits[0])*i/255)) for i in range(256))
+                alpha = alpha.translate(table)
         # PdfImage would combine/premultiply the mask. Extract the unassociated
         # color channels separately and always restore the PDF's original mask.
         del image['/SMask']
@@ -530,6 +541,8 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
             if len(limits)!=2 or not all(math.isfinite(v) for v in limits):
                 raise ConversionError('Invalid Indexed image Decode')
             lookup = space[3]
+            if not isinstance(lookup,(pikepdf.Stream,pikepdf.String)):
+                raise ConversionError('Indexed palette must be a string or stream')
             palette = lookup.read_bytes() if isinstance(lookup,pikepdf.Stream) else bytes(lookup)
             if len(palette)<(high+1)*channels: raise ConversionError('Invalid Indexed palette length')
             mapped = [max(0,min(high,math.floor(limits[0]+(limits[1]-limits[0])*v/maximum+0.5))) for v in range(maximum+1)]
@@ -554,7 +567,11 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
             limits = tuple(map(float,decode))
             if len(limits)!=2*channels or not all(math.isfinite(v) and 0<=v<=1 for v in limits):
                 raise ConversionError("Invalid image Decode")
-            if samples is not None:
+            if bits==16:
+                pixels = bytes(round(255*(limits[2*(i//2%channels)]+
+                               (limits[2*(i//2%channels)+1]-limits[2*(i//2%channels)])*
+                               int.from_bytes(raw[i:i+2],'big')/65535)) for i in range(0,len(raw),2))
+            elif samples is not None:
                 maximum = (1<<bits)-1
                 tables = [[round(255*(limits[2*c]+(limits[2*c+1]-limits[2*c])*i/maximum))
                            for i in range(maximum+1)] for c in range(channels)]

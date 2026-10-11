@@ -1,5 +1,6 @@
 """Read-only page validation using the same parser and writer as conversion."""
 from pathlib import Path
+import math
 import pikepdf
 
 from .native import drawing_report, make_private
@@ -7,13 +8,15 @@ from .vector import ConversionError, read_drawing
 
 
 def inspect_document(source, pages=None, raster_dpi=300):
+    if not math.isfinite(raster_dpi) or not 72 <= raster_dpi <= 1200:
+        raise ConversionError('Raster DPI must be between 72 and 1200')
     source = Path(source)
     results = []
     with pikepdf.open(source) as pdf:
         if pdf.is_encrypted:
             raise ConversionError('Encrypted PDFs are unsupported')
         selected = list(pages) if pages is not None else list(range(1, len(pdf.pages)+1))
-        if not selected or any(type(p) is not int or not 1 <= p <= len(pdf.pages) for p in selected):
+        if not selected or any(type(p) is not int or not 1 <= p <= len(pdf.pages) for p in selected) or len(set(selected)) != len(selected):
             raise ConversionError('Invalid page selection')
         for number in selected:
             try:
@@ -21,6 +24,7 @@ def inspect_document(source, pages=None, raster_dpi=300):
                 make_private(drawing, source.name)
                 result = drawing_report(drawing, source, '', number-1, 'vector', None, raster_dpi, False, 0)
                 result['native_supported'] = True
+                result['planned_mode'] = 'vector'
             except (ConversionError, pikepdf.PdfError, NotImplementedError) as error:
                 result = {'input':str(source), 'page':number, 'native_supported':False,
                           'first_blocker':str(error), 'planned_mode':'raster-fallback',
