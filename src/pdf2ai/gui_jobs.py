@@ -13,6 +13,8 @@ from .vector import ConversionError
 def plan_jobs(sources,directory,expression,combined):
     plans = []
     directory = Path(directory)
+    if not sources or not directory.is_dir():
+        raise ConversionError('PDFと出力先ディレクトリを指定してください。')
     for source in map(Path,sources):
         try:
             with pikepdf.open(source) as pdf:
@@ -32,6 +34,8 @@ def plan_jobs(sources,directory,expression,combined):
     outputs = [out.resolve() for _,out,_ in plans]
     if len(outputs)!=len(set(outputs)):
         raise ConversionError('入力ファイルの出力名が衝突しています。保存先を分けて変換してください。')
+    if any(output.is_dir() for _,output,_ in plans):
+        raise ConversionError('出力AIと同名のフォルダーがあります。保存先を変更してください。')
     return plans
 
 
@@ -43,6 +47,7 @@ def run_jobs(plans, *, combined, overwrite, strict, outline, resolution,
     reports = []
     stopped = False
     report_error = None
+    worker_error = None
     started = time.monotonic()
     try:
         for source,output,selection in plans:
@@ -93,8 +98,12 @@ def run_jobs(plans, *, combined, overwrite, strict, outline, resolution,
             except Exception as error:
                 report_error = str(error)
                 emit(('log',f'レポート保存エラー: {error}'))
+    except Exception as error:
+        worker_error = str(error)
+        emit(('log',f'処理を続行できませんでした: {error}'))
     finally:
         # Always release the UI, including failures in conversion/report output.
         emit(('done',{'total':total,'saved':saved,'failed':failed,'cancelled':stopped,
                       'unprocessed':total-saved-failed,'report_error':report_error,
+                      'worker_error':worker_error,
                       'elapsed_seconds':time.monotonic()-started}))

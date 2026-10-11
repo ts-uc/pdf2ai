@@ -247,6 +247,8 @@ def convert_export(request):
     outputs, report_path = output_paths(request['output'], pages, output_mode)
     write_report = bool(request.get('write_report', False))
     destinations = outputs + ([report_path] if write_report else [])
+    if any(path.is_dir() for path in destinations):
+        raise ValueError('出力先がファイルではなくフォルダーです。保存先を変更してください。')
     overwrite = bool(request.get('overwrite', False))
     if not overwrite:
         existing = [path for path in destinations if path.exists()]

@@ -87,6 +87,7 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
         raise ConversionError('出力先フォルダーと .ai 拡張子を確認してください。')
     if output.exists() and not overwrite:
         raise FileExistsError(f'出力が既に存在します: {output.name}')
+    if output.is_dir():raise ConversionError('Output must be a file, not a directory')
     if not math.isfinite(raster_dpi) or not 72 <= raster_dpi <= 1200:
         raise ConversionError('Raster DPI must be between 72 and 1200')
     with pikepdf.open(source) as pdf:

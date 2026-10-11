@@ -89,6 +89,18 @@ def test_batch_conflict_checked_before_first_output(tmp_path):
     assert (tmp_path/'export_004.ai').read_bytes()==b'keep'
 
 
+@pytest.mark.parametrize('mode,directory_name',[('separate','export_004.ai'),
+                                               ('combined','export.ai'),
+                                               ('separate','export.report.json')])
+def test_directory_destination_is_rejected_before_any_output(tmp_path,mode,directory_name):
+    source=tmp_path/'input.pdf';selected_pdf(source)
+    (tmp_path/directory_name).mkdir()
+    with pytest.raises(ValueError,match='フォルダー'):
+        bridge.convert_export({'pdf':str(source),'pages':[2,4],'output':str(tmp_path/'export.ai'),
+                               'overwrite':True,'write_report':True,'output_mode':mode})
+    assert not (tmp_path/'export_002.ai').exists()
+
+
 def test_page_count_mismatch_does_not_write(tmp_path):
     source=tmp_path/'input.pdf';selected_pdf(source)
     with pytest.raises(ValueError,match='ページ数'):

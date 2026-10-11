@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import math
 import tempfile
 from pathlib import Path
 import sys
@@ -12,6 +13,11 @@ from .multiboard import convert_document
 
 
 def select_pages(expression, count):
+    if type(count) is not int or count < 1:
+        raise ConversionError('PDFに変換対象ページがありません')
+    if not isinstance(expression,str) or not expression.strip():
+        raise ConversionError('対象ページを指定してください（all または 1,3-5）')
+    expression = expression.strip()
     if expression == 'all':
         return list(range(1, count + 1))
     result = []
@@ -66,7 +72,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.output and len(args.inputs)!=1: parser.error("--outputは入力1件で使用してください")
     if args.page is not None and args.page<1: parser.error("--pageは1以上にしてください")
-    if args.page is not None and (args.pages or args.combine): parser.error('--pageと--pages/--combineは併用できません')
+    if args.page is not None and (args.pages is not None or args.combine): parser.error('--pageと--pages/--combineは併用できません')
     if args.combine and args.outline_text: parser.error('--combineと--outline-textは現在併用できません')
     if args.check:
         if args.output or args.output_dir or args.combine or args.outline_text:
@@ -74,24 +80,34 @@ def main(argv=None) -> int:
         from .preflight import inspect_document
         inspected = []
         try:
+            if args.pages is not None and not args.pages.strip():
+                raise ConversionError('対象ページを指定してください（all または 1,3-5）')
             if args.report and (not args.report.parent.is_dir() or args.report.resolve() in {p.resolve() for p in args.inputs}):
                 raise ConversionError('レポートの保存先が不正です')
+            if args.report and args.report.is_dir():
+                raise ConversionError('レポートの保存先がファイルではなくフォルダーです')
             for source in args.inputs:
                 with pikepdf.open(source) as pdf:
                     numbers = [args.page] if args.page else select_pages(args.pages or 'all', len(pdf.pages))
                 inspected.extend(inspect_document(source, numbers, args.raster_dpi))
             if args.report: publish_report(args.report, inspected)
-        except (ConversionError, pikepdf.PdfError, OSError) as error:
+        except (ConversionError, pikepdf.PdfError, pikepdf.PasswordError, OSError) as error:
             print(f'ERROR: {error}', file=sys.stderr)
             return 1
         print(json.dumps(inspected, ensure_ascii=False, indent=2))
         return int(any(not r['native_supported'] for r in inspected))
     plans = []
     try:
+        if not math.isfinite(args.raster_dpi) or not 72 <= args.raster_dpi <= 1200:
+            raise ConversionError('Raster DPI must be between 72 and 1200')
+        if args.pages is not None and not args.pages.strip():
+            raise ConversionError('対象ページを指定してください（all または 1,3-5）')
         for source in args.inputs:
             if source.suffix.lower() != '.pdf':
                 raise ConversionError('Input must have a .pdf extension')
             base = args.output or ((args.output_dir or source.parent)/(source.stem+'.ai'))
+            if base.suffix.lower() != '.ai':
+                raise ConversionError('Output must have an .ai extension')
             if args.pages or args.combine:
                 with pikepdf.open(source) as pdf:
                     selected = select_pages(args.pages or 'all', len(pdf.pages))
@@ -107,6 +123,8 @@ def main(argv=None) -> int:
                 raise ConversionError('出力先フォルダーと .ai 拡張子を確認してください')
             if out.exists() and not args.overwrite:
                 raise ConversionError(f'Output already exists: {out}')
+            if out.is_dir():
+                raise ConversionError(f'出力先がファイルではなくフォルダーです: {out}')
         if len(set(outputs)) != len(outputs):
             raise ConversionError('複数入力の出力名が衝突しています')
         if set(outputs) & {p.resolve() for p in args.inputs}:
@@ -116,7 +134,9 @@ def main(argv=None) -> int:
                 raise ConversionError('report path conflicts with input/output')
             if not args.report.parent.is_dir():
                 raise ConversionError('レポートの保存先フォルダーが存在しません')
-    except (ConversionError, pikepdf.PdfError, OSError) as exc:
+            if args.report.is_dir():
+                raise ConversionError('レポートの保存先がファイルではなくフォルダーです')
+    except (ConversionError, pikepdf.PdfError, pikepdf.PasswordError, OSError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 1
     results=[]; failed=False
@@ -133,7 +153,7 @@ def main(argv=None) -> int:
                 print(f'{output}: {len(batch)} artboards')
                 continue
             report=convert(source,output,page_number=selected,overwrite=args.overwrite,outline_text=args.outline_text,ghostscript=args.ghostscript,raster_fallback=not args.strict,raster_dpi=args.raster_dpi)
-        except (ConversionError,pikepdf.PdfError,OSError) as exc:
+        except (ConversionError,pikepdf.PdfError,pikepdf.PasswordError,OSError) as exc:
             failed=True;report={"input":str(source),"output":str(output),"error":str(exc)}
             print(f"ERROR: {source}: {exc}",file=sys.stderr)
         else:

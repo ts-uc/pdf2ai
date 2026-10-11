@@ -91,6 +91,8 @@ def main():
         strict_selected = strict.get()
         write_report = report_selected.get()
         report_path = directory/'pdf2ai.report.json'
+        if write_report and report_path.is_dir():
+            messagebox.showerror('入力の確認','レポートと同名のフォルダーがあります。保存先を変更してください。');return
         if write_report and report_path.resolve() in {p.resolve() for p in selected} | set(outputs):
             messagebox.showerror('入力の確認','レポートの保存先が入力または出力と衝突しています。');return
         existing = [out for _,out,_ in plans if out.exists()]
@@ -101,11 +103,18 @@ def main():
         running = True
         for control in controls: control.configure(state='disabled')
         cancel.configure(state='normal')
-        progress.configure(value=0,maximum=sum(len(s) if combined else 1 for _,_,s in plans))
+        total = sum(len(s) if combined else 1 for _,_,s in plans)
+        progress.configure(value=0,maximum=total)
         status.set('変換を開始します。')
-        threading.Thread(target=run_jobs,kwargs=dict(plans=plans,combined=combined,overwrite=overwrite,
-            strict=strict_selected,outline=outline_selected,resolution=resolution,
-            cancelled=cancelled.is_set,emit=messages.put,report_path=report_path if write_report else None),daemon=True).start()
+        try:
+            threading.Thread(target=run_jobs,kwargs=dict(plans=plans,combined=combined,overwrite=overwrite,
+                strict=strict_selected,outline=outline_selected,resolution=resolution,
+                cancelled=cancelled.is_set,emit=messages.put,report_path=report_path if write_report else None),daemon=True).start()
+        except (RuntimeError,OSError) as error:
+            messages.put(('log',f'変換処理を開始できませんでした: {error}'))
+            messages.put(('done',{'total':total,'saved':0,'failed':0,'cancelled':False,
+                                 'unprocessed':total,'report_error':None,'worker_error':str(error),
+                                 'elapsed_seconds':0}))
 
     start = ttk.Button(frame,text="変換",command=run);start.pack(anchor="e",pady=8)
     def request_cancel():
@@ -133,7 +142,7 @@ def main():
                     for control in controls: control.configure(state='normal')
                     cancel.configure(state='disabled')
                     result = message[1]
-                    label = 'キャンセル' if result['cancelled'] else '完了（エラーあり）' if result['failed'] or result['report_error'] else '完了'
+                    label = 'キャンセル' if result['cancelled'] else '完了（エラーあり）' if result['failed'] or result['report_error'] or result['worker_error'] or result['unprocessed'] else '完了'
                     summary = f"{label}：保存 {result['saved']}/{result['total']}ページ、失敗 {result['failed']}、未処理 {result['unprocessed']}（{result['elapsed_seconds']:.1f}秒）"
                     status.set(summary);write(summary)
                     progress.configure(value=result['saved']+result['failed'])

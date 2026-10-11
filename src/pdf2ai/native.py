@@ -306,13 +306,17 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
     if output.suffix.lower() != ".ai": raise ConversionError("Output must have an .ai extension")
     if output.exists() and not overwrite: raise ConversionError(f"Output already exists: {output}")
     if not output.parent.is_dir(): raise ConversionError(f"Output directory does not exist: {output.parent}")
+    if output.is_dir():raise ConversionError('Output must be a file, not a directory')
+    if page_number is not None and (type(page_number) is not int or page_number < 1):
+        raise ConversionError('Page number must be a positive integer')
     if not math.isfinite(raster_dpi) or not 72<=raster_dpi<=1200:
         raise ConversionError("Raster DPI must be between 72 and 1200")
     with pikepdf.open(source) as pdf:
         if pdf.is_encrypted: raise ConversionError("Encrypted PDFs are unsupported")
+        if not len(pdf.pages):raise ConversionError('PDF has no pages')
         if len(pdf.pages) != 1 and page_number is None:
             raise ConversionError("Multipage PDF: specify --page N; one page per AI file")
-        index = (page_number or 1)-1
+        index = (1 if page_number is None else page_number)-1
         if not 0 <= index < len(pdf.pages): raise ConversionError("Page number is out of range")
         page = pdf.pages[index]
         fallback_reason = None
