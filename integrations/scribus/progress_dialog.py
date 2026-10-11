@@ -19,7 +19,8 @@ def build_preflight_dialog(summary):
     layout = QVBoxLayout(dialog)
     unsupported = [r for r in summary['results'] if not r['native_supported']]
     layout.addWidget(QLabel(f"対象 {len(summary['results'])}ページ／画像化が必要 {len(unsupported)}ページ"))
-    layout.addWidget(QLabel('文字は輪郭になります。画像化したページでは文字・パス・特色・レイヤーの個別編集が失われます。',wordWrap=True))
+    if unsupported:
+        layout.addWidget(QLabel('画像化したページでは文字・パス・特色・レイヤーの個別編集が失われます。',wordWrap=True))
     details = QPlainTextEdit()
     details.setObjectName('preflight_details')
     details.setReadOnly(True)
@@ -159,7 +160,11 @@ class ExportSession(QDialog):
             self.summary = {'committed':False,'error':message or self.process.errorString(),'results':[]}
         elif self.mode=='inspect':
             summary = self.pending
-            allowed = self.approve(summary) if self.approve is not None else build_preflight_dialog(summary).exec()==QDialog.DialogCode.Accepted
+            needs_confirmation = not summary['can_export'] or any(
+                not item['native_supported'] or item.get('warnings') for item in summary['results'])
+            allowed = True
+            if needs_confirmation:
+                allowed = self.approve(summary) if self.approve is not None else build_preflight_dialog(summary).exec()==QDialog.DialogCode.Accepted
             if allowed and summary['can_export']:
                 self.label.setText('変換を開始します。')
                 self.start('worker')

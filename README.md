@@ -36,7 +36,7 @@ Keep the downloaded project folder together; use the script from its original lo
 2. Choose **Script → Execute Script** and select [`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py). / **スクリプト → スクリプトを実行**から同ファイルを選びます。
 3. Choose the pages: `all` for all pages, `current` for the current page, or `1,3-5` for specific pages. / 対象ページを入力します。`all` は全ページ、`current` は現在のページ、`1,3-5` は指定ページです。
 4. Choose **ページ別のAIファイル** (separate files) or **対象ページを1つのAIファイルにまとめる** (one file), select the output filename, then click **書き出し** (Export). / **書き出し方法**でページ別または1つのAIにまとめる方法を選び、保存先とファイル名を指定して**書き出し**を押します。
-5. Review the preflight results, then click **書き出し** to proceed. / **書き出し前チェック**で画像化されるページ・理由を確認して、**書き出し**を押します。画像化禁止が有効で未対応ページがある場合は書き出せません。
+5. When warnings appear, review the preflight results, then click **書き出し** to proceed. If no warnings appear, export continues automatically. / 警告がある場合は**書き出し前チェック**で内容を確認して、**書き出し**を押します。警告がなければ自動で書き出しへ進みます。画像化禁止が有効で未対応ページがある場合は書き出せません。
 
 Separate output saves each page in an AI file, with original page numbers such as `design_001.ai`. Combined output saves the selected pages as separate artboards in a single `design.ai`. Next time, you can select the script from Scribus's recent scripts.
 

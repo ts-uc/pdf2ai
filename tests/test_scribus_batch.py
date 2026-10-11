@@ -183,3 +183,36 @@ assert 'ページ7' in dialog.findChild(QPlainTextEdit).toPlainText()
     env=bridge.child_environment();env['QT_QPA_PLATFORM']='offscreen'
     result=subprocess.run([sys.executable,'-c',code,str(SCRIPT.parent)],env=env,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
+
+
+@pytest.mark.parametrize('case', ['clean', 'warning', 'fallback', 'blocked', 'declined'])
+def test_preflight_confirmation_only_for_warnings_or_blockers(tmp_path, case):
+    pytest.importorskip('PySide6.QtWidgets')
+    request = tmp_path/'request.json'
+    request.write_text(json.dumps({'pages':[1]}))
+    code = r'''
+import sys
+sys.path.insert(0,sys.argv[1])
+from progress_dialog import ExportSession
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QProcess
+app=QApplication(['test'])
+case=sys.argv[3]
+calls=[]
+session=ExportSession(sys.argv[2],'unused',approve=lambda summary: calls.append(summary) or case!='declined')
+session.mode='inspect'
+session.pending={'can_export':case!='blocked','results':[{
+    'native_supported':case not in ('fallback','blocked'),
+    'warnings':['Text is outlined'] if case in ('warning','declined') else []}]}
+started=[]
+session.start=lambda mode: started.append(mode)
+session.worker_finished(0,QProcess.ExitStatus.NormalExit)
+assert bool(calls)==(case!='clean')
+assert started==([] if case in ('blocked','declined') else ['worker'])
+if case in ('blocked','declined'):
+    assert session.summary['preflight_rejected'] and not session.summary['committed']
+'''
+    env=bridge.child_environment();env['QT_QPA_PLATFORM']='offscreen'
+    result=subprocess.run([sys.executable,'-c',code,str(SCRIPT.parent),str(request),case],
+                          env=env,capture_output=True,text=True,timeout=20)
+    assert result.returncode==0,result.stderr
