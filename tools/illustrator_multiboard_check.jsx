@@ -18,9 +18,11 @@
                 var expected = 3;
                 if (filename.indexOf('pages-') === 0) expected = 4;
                 else if (filename.indexOf('fallback-') === 0) expected = 9;
+                else if (filename.indexOf('selected-') === 0) expected = 2;
                 if (d.artboards.length != expected) throw new Error('Incorrect artboard count: ' + info(d) + '; expected=' + expected);
                 for (var j=0; j<d.artboards.length; j++) {
-                    if (d.artboards[j].name != 'Page ' + (j+1)) throw new Error('Incorrect artboard name: ' + d.artboards[j].name + '; ' + info(d));
+                    var number = filename.indexOf('selected-') === 0 ? (j === 0 ? 3 : 1) : j+1;
+                    if (d.artboards[j].name != 'Page ' + number) throw new Error('Incorrect artboard name: ' + d.artboards[j].name + '; ' + info(d));
                 }
                 var before = info(d);
                 var options = new IllustratorSaveOptions(); options.pdfCompatible = true;

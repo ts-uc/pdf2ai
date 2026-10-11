@@ -72,3 +72,5 @@ After setup, run the following command from the folder containing this README. R
 For a multipage PDF, add `--page 2` to convert page 2. See [the detailed guide](docs/technical.md) for other options, supported features, and troubleshooting.
 
 複数ページの PDF は、`--page 2` を追加すると 2 ページ目を変換できます。その他の使い方・対応機能・困ったときの設定は[詳細ガイド](docs/technical.md)を参照してください。
+
+全ページをページ別に保存する場合は`--pages all`、1つのAIにまとめる場合は`--combine`を指定します。`--pages 1,3-5`で範囲を選択できます。`--check`はAIを作らず全ページのベクター対応可否を検査します。追加機能・検証結果と未完了事項は[課題への対応状況](docs/issue-resolution-progress.md)を参照してください。

@@ -76,7 +76,7 @@ def translate_drawing(drawing, box, page):
                    layers=[layers[l] for l in drawing.layers])
 
 
-def convert_document(source, output, *, page_labels=None, overwrite=False,
+def convert_document(source, output, *, page_labels=None, pages=None, overwrite=False,
                      raster_fallback=True, raster_dpi=300):
     """Convert all pages atomically; a failed page prevents publishing the AI."""
     source, output = Path(source), Path(output)
@@ -91,13 +91,17 @@ def convert_document(source, output, *, page_labels=None, overwrite=False,
     with pikepdf.open(source) as pdf:
         if pdf.is_encrypted:
             raise ConversionError('Encrypted PDFs are unsupported')
-        if not 1 <= len(pdf.pages) <= 1000:
+        selected = list(pages) if pages is not None else list(range(1, len(pdf.pages)+1))
+        if not selected or any(type(p) is not int or not 1 <= p <= len(pdf.pages) for p in selected) or len(set(selected)) != len(selected):
+            raise ConversionError('Invalid page selection')
+        if not 1 <= len(selected) <= 1000:
             raise ConversionError('1つのAIにまとめられるページ数は1〜1000です。')
-        labels = list(page_labels) if page_labels is not None else list(range(1, len(pdf.pages)+1))
-        if len(labels) != len(pdf.pages) or any(type(p) is not int or p < 1 for p in labels) or len(set(labels)) != len(labels):
+        labels = list(page_labels) if page_labels is not None else selected
+        if len(labels) != len(selected) or any(type(p) is not int or p < 1 for p in labels) or len(set(labels)) != len(labels):
             raise ConversionError('Invalid page selection')
         drawings, reports = [], []
-        for index, page in enumerate(pdf.pages):
+        for index, number in enumerate(selected):
+            page = pdf.pages[number-1]
             reason = None
             try:
                 drawing = read_drawing(page, root=pdf.Root)
@@ -107,9 +111,9 @@ def convert_document(source, output, *, page_labels=None, overwrite=False,
                     raise ConversionError(f'ページ{labels[index]}：{error}') from error
                 from .rasterize import render_drawing
                 reason = str(error)
-                drawing = render_drawing(source, index, raster_dpi)
+                drawing = render_drawing(source, number-1, raster_dpi)
             drawings.append(drawing)
-            report = drawing_report(drawing, source, output, index,
+            report = drawing_report(drawing, source, output, number-1,
                                     'raster-fallback' if reason else 'vector', reason, raster_dpi, False, 0)
             report['page'] = labels[index]
             reports.append(report)
@@ -130,6 +134,12 @@ def convert_document(source, output, *, page_labels=None, overwrite=False,
                          layers=[l for d in shifted for l in d.layers])
         artboards = [(f'Page {p}', box) for p, box in zip(labels, boxes)]
         meta, private = make_private(merged, source.name, artboards=artboards)
+        # Preserve the requested order in the PDF representation as well.
+        original_pages = list(pdf.pages)
+        for number in selected:
+            pdf.pages.append(original_pages[number-1])
+        for _ in original_pages:
+            del pdf.pages[0]
         blocks = save_ai(pdf, output, meta, private, overwrite=overwrite)
         for report, box in zip(reports, boxes):
             report.update(private_blocks=blocks, artboard_box=list(box))

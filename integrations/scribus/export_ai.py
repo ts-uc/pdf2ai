@@ -112,7 +112,7 @@ def build_export_dialog(document, count, current):
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                   QLineEdit, QCheckBox, QComboBox, QPushButton,
-                                  QDialogButtonBox, QFileDialog, QMessageBox)
+                                  QDialogButtonBox, QFileDialog, QMessageBox, QSpinBox)
     dialog = QDialog()
     dialog.setWindowTitle('AI書き出し')
     dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -141,6 +141,22 @@ def build_export_dialog(document, count, current):
     report.setObjectName('write_report')
     report.setChecked(False)
     layout.addWidget(report)
+    strict = QCheckBox('未対応機能があれば画像化せずエラーにする')
+    strict.setObjectName('strict')
+    strict.setChecked(STRICT)
+    layout.addWidget(strict)
+    layout.addWidget(QLabel('画像化する場合の解像度（dpi）'))
+    dpi = QSpinBox()
+    dpi.setObjectName('raster_dpi')
+    dpi.setRange(72, 1200)
+    dpi.setValue(int(RASTER_DPI))
+    layout.addWidget(dpi)
+    bleeds = QCheckBox('文書の裁ち落としを含める')
+    bleeds.setObjectName('bleeds')
+    layout.addWidget(bleeds)
+    marks = QCheckBox('トンボを付ける')
+    marks.setObjectName('crop_marks')
+    layout.addWidget(marks)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
     buttons.button(QDialogButtonBox.StandardButton.Ok).setText('書き出し')
     buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('キャンセル')
@@ -163,7 +179,8 @@ def build_export_dialog(document, count, current):
             QMessageBox.warning(dialog, 'AI書き出し', str(error))
             return
         dialog.export_options = {'pages': selected, 'output': chosen, 'write_report': report.isChecked(),
-                                 'output_mode': output_mode.currentData()}
+                                 'output_mode': output_mode.currentData(), 'strict': strict.isChecked(),
+                                 'dpi': dpi.value(), 'bleeds': bleeds.isChecked(), 'crop_marks': marks.isChecked()}
         dialog.accept()
 
     browse.clicked.connect(choose_file)
@@ -179,7 +196,7 @@ def export_dialog(document, count, current):
     return dialog.export_options if dialog.exec() == QDialog.DialogCode.Accepted else None
 
 
-def export_pdf(scribus, path, pages):
+def export_pdf(scribus, path, pages, options=None):
     pdf = scribus.PDFfile()
     settings = {'file': str(path), 'pages': pages, 'version': 15, 'useLayers': True,
                 'fontEmbedding': 1, 'usespot': True, 'outdst': 1, 'profiles': False,
@@ -190,6 +207,9 @@ def export_pdf(scribus, path, pages):
                 'cropMarks': False, 'bleedMarks': False, 'registrationMarks': False,
                 'colorMarks': False, 'docInfoMarks': False,
                 'useDocBleeds': False, 'bleedt': 0, 'bleedb': 0, 'bleedl': 0, 'bleedr': 0}
+    options = options or {}
+    settings['useDocBleeds'] = bool(options.get('bleeds', False))
+    settings['cropMarks'] = bool(options.get('crop_marks', False))
     for name, value in settings.items():
         setattr(pdf, name, value)
     pdf.save()
@@ -295,9 +315,10 @@ def scribus_main(scribus):
         with tempfile.TemporaryDirectory(prefix='.pdf2ai-scribus-', dir=outputs[0].parent) as directory:
             directory = Path(directory)
             pdf = directory / 'document.pdf'
-            export_pdf(scribus, pdf, pages)
+            export_pdf(scribus, pdf, pages, options)
             request = {'pdf': str(pdf), 'pages': pages, 'output': str(Path(chosen)),
-                       'overwrite': overwrite, 'strict': STRICT, 'dpi': RASTER_DPI, 'document': document.name,
+                       'overwrite': overwrite, 'strict': options.get('strict', STRICT),
+                       'dpi': options.get('dpi', RASTER_DPI), 'document': document.name,
                        'write_report': write_report, 'output_mode': output_mode}
             request_path = directory / 'request.json'
             request_path.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')

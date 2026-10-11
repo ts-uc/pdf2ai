@@ -384,7 +384,19 @@ def save_ai(pdf, output, meta, private, *, overwrite=False):
 
 
 def drawing_report(drawing, source, output, index, conversion_mode, fallback_reason, raster_dpi, outline_text, private_blocks):
+    warnings = []
+    if drawing.outlined_glyphs or outline_text:
+        warnings.append('Text is outlined; live text editing is unavailable')
+    if drawing.outlined_strokes:
+        warnings.append('Outlined strokes cannot be edited as stroke widths or dash patterns')
+    if drawing.approximated_strokes:
+        warnings.append('Curve subdivision tolerance is not a bound on final outline error')
+    if drawing.color_model == 'RGB' and any(i.model == 'CMYK' for i in drawing.images):
+        warnings.append('CMYK images in RGB documents may change appearance after Illustrator resaving')
+    if drawing.operators.get('ri') or drawing.operators.get('i'):
+        warnings.append('PDF rendering intent/flatness operators are not preserved in editable artwork')
     return {"input":str(source),"output":str(output),"format":"Illustrator 2020 (24), experimental",
+            "warnings":warnings,
             "layers":[{"name":name,"visible":layer.visible if layer else True,"locked":layer.locked if layer else False,"printable":layer.printable if layer else True} for layer,name,_ in layer_runs(drawing)],
             "conversion_mode":conversion_mode,"rasterized":conversion_mode=='raster-fallback',
             "fallback_reason":fallback_reason,"raster_dpi":raster_dpi if fallback_reason else None,

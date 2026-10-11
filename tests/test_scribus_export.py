@@ -35,6 +35,14 @@ def test_pdf_options_preserve_layers_spots_and_outline_text(tmp_path):
     assert pdf.downsample==0 and pdf.embedPDF and not pdf.cropMarks
 
 
+def test_optional_bleeds_and_crop_marks(tmp_path):
+    pdf=SimpleNamespace()
+    pdf.save=lambda:Path(pdf.file).write_bytes(b'pdf')
+    bridge.export_pdf(SimpleNamespace(PDFfile=lambda:pdf),tmp_path/'print.pdf',[1],
+                      {'bleeds':True,'crop_marks':True})
+    assert pdf.useDocBleeds and pdf.cropMarks
+
+
 def selected_pdf(path):
     with pikepdf.open(ROOT/'sample'/'conversion_pages.pdf') as pdf:
         del pdf.pages[2];del pdf.pages[0];pdf.save(path)
@@ -180,7 +188,8 @@ print(json.dumps(dialog.export_options))
     env=bridge.child_environment();env['QT_QPA_PLATFORM']='offscreen'
     result=subprocess.run([sys.executable,'-c',code,str(SCRIPT),str(tmp_path),str(checked),output_mode],env=env,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
-    assert json.loads(result.stdout)=={'pages':[2],'output':str(tmp_path/'original.ai'),'write_report':checked,'output_mode':output_mode}
+    assert json.loads(result.stdout)=={'pages':[2],'output':str(tmp_path/'original.ai'),'write_report':checked,'output_mode':output_mode,
+                                      'strict':False,'dpi':300,'bleeds':False,'crop_marks':False}
 
 
 def test_combined_worker_preserves_all_pdf_pages_and_native_artboards(tmp_path):
