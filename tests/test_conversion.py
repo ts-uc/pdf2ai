@@ -90,7 +90,17 @@ def test_unified_samples(tmp_path,kind,page):
     with pikepdf.open(out) as generated:
         assert read_private(generated)
         assert generated.pages[0].obj.PieceInfo.Illustrator.Private.CreatorVersion==24
-    with fitz.open(source) as original,fitz.open(out) as generated:
+    comparison_source = source
+    if kind == 'native':
+        # DIC colors now intentionally use the reference CMYK book in both
+        # representations. Keep validating all other sample content unchanged.
+        comparison_source = tmp_path/'expected.pdf'
+        with pikepdf.open(source) as expected:
+            from pdf2ai.dic import normalize_pdf_spots
+            normalize_pdf_spots(expected.pages[page-1])
+            expected.save(comparison_source)
+        assert result['color_conversions']
+    with fitz.open(comparison_source) as original,fitz.open(out) as generated:
         matrix=fitz.Matrix(0.35,0.35) if kind=='native' else fitz.Matrix(1,1)
         assert original[page-1].get_pixmap(matrix=matrix).samples==generated[0].get_pixmap(matrix=matrix).samples
 

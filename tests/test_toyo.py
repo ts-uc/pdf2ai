@@ -52,7 +52,7 @@ def test_all_book_colors_have_valid_values_and_resolve():
 def test_dic_and_toyo_names_remain_independent():
     assert toyo_name('DIC 1') is None and toyo_color('DIC 1s') is None
     assert dic_name('TOYO 1') is None and dic_color('CF 10001*') is None
-    assert dic_color('DIC 1')['lab'] == pytest.approx([87.0588226318359, 12, 17])
+    assert dic_color('DIC 1')['cmyk'] == [0, .16, .17, 0]
 
 
 @pytest.mark.parametrize('name', ['TOYO test', 'TOYO 999999', 'TOYO 1 custom',
@@ -97,7 +97,7 @@ def test_toyo_tints_alias_deduplication_and_dic_in_one_document(tmp_path):
     report = convert(source, output, raster_fallback=False)
     assert not report['rasterized']
     assert [s['name'] for s in report['spots']] == ['CF 10001*', 'TOYO 0001', 'DIC 1s']
-    assert all(s['alternate_space'] == 'Lab' for s in report['spots'])
+    assert [s['alternate_space'] for s in report['spots']] == ['Lab', 'Lab', 'CMYK']
     with pikepdf.open(output) as ai:
         private = read_private(ai)
         assert private.count(b'(CF 10001*)\rPc') == 1

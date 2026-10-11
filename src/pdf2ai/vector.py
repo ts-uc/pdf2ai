@@ -707,6 +707,7 @@ def read_spot(space) -> Spot:
     from .toyo import toyo_color, toyo_name
     name = str(space[1])[1:]
     reference = dic_color(name)
+    is_dic = reference is not None
     if reference is not None:
         name = dic_name(name)
     else:
@@ -751,6 +752,8 @@ def read_spot(space) -> Spot:
     bounds = ((0,100),(-128,127),(-128,127)) if is_lab else ((0,1),)*4
     if not all(math.isfinite(v) and lo <= v <= hi for v,(lo,hi) in zip(full,bounds)):
         raise ConversionError("Invalid spot values")
+    if is_dic:
+        return Spot(name, tuple(reference['cmyk']))
     return Spot(name, tuple(reference['cmyk']), full if is_lab else tuple(reference['lab'])) if reference else Spot(name, full)
 
 

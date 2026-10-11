@@ -2,6 +2,7 @@
 from dataclasses import replace
 import math
 from pathlib import Path
+import tempfile
 
 import pikepdf
 
@@ -101,6 +102,10 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
         if len(labels) != len(selected) or any(type(p) is not int or p < 1 for p in labels) or len(set(labels)) != len(labels):
             raise ConversionError('Invalid page selection')
         drawings, reports = [], []
+        from .dic import normalize_pdf_spots
+        # Normalize all selected pages before rendering any fallback page, since
+        # pages can share indirect color-space dictionaries and Form resources.
+        normalized_dic = {number: normalize_pdf_spots(pdf.pages[number-1]) for number in selected}
         for index, number in enumerate(selected):
             page = pdf.pages[number-1]
             reason = None
@@ -112,7 +117,15 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
                     raise ConversionError(f'ページ{labels[index]}：{error}') from error
                 from .rasterize import render_drawing
                 reason = str(error)
-                drawing = render_drawing(source, number-1, raster_dpi)
+                if any(normalized_dic.values()):
+                    with tempfile.TemporaryDirectory(prefix='pdf2ai-dic-', dir=output.parent) as directory:
+                        normalized = Path(directory)/'normalized.pdf'
+                        pdf.save(normalized)
+                        drawing = render_drawing(normalized, number-1, raster_dpi)
+                else:
+                    drawing = render_drawing(source, number-1, raster_dpi)
+            if normalized_dic[number]:
+                drawing.color_conversions.append('DIC spot alternate colors normalized to legacy CMYK book: '+', '.join(normalized_dic[number]))
             drawings.append(drawing)
             report = drawing_report(drawing, source, output, number-1,
                                     'raster-fallback' if reason else 'vector', reason, raster_dpi, False, 0)

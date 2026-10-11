@@ -44,13 +44,13 @@ Separate output saves each page in an AI file, with original page numbers such a
 
 全ページの変換が成功してからAIを一式保存します。途中の変換失敗やキャンセルでは既存AIを保持し、保存中の通常のエラーでは元のファイルへ復元します。PDF作成後はScribus連携の進捗画面で検査・変換の状況を確認し、キャンセルできます。保存・復元中はキャンセルできません。詳しい動作と検証範囲は[対応記録](docs/scribus-export-safety.md)を参照してください。
 
-To use DIC colors, register them as **spot colors** in Scribus. Names such as `DIC 1` and `DIC 4` are also accepted and exported as the corresponding DIC Lab swatches.
+To use DIC colors, register them as **spot colors** in Scribus. Names such as `DIC 1` and `DIC 4` are also accepted and exported as spot swatches with the legacy DIC book's CMYK alternate values.
 
-DIC 色を使う場合は、Scribus で**特色**として登録してください。`DIC 1` や `DIC 4` のような名前でも、対応する DIC の Lab スウォッチとして書き出せます。
+DIC 色を使う場合は、Scribus で**特色**として登録してください。`DIC 1` や `DIC 4` のような名前でも、旧版DICカラーブックのCMYK代替値を持つ特色スウォッチとして書き出せます。`DIC 1s`はC=0%、M=16%、Y=17%、K=0%です。特色名と濃度を保持し、プロセスカラーには分解しません。
 
 Import the supplied [DIC palette](integrations/scribus/palettes/DIC_Lab.xml) in Scribus’s color dialog to add all 1280 colors as spot colors.
 
-Scribus の色設定ダイアログから同梱の [DIC パレット](integrations/scribus/palettes/DIC_Lab.xml)をインポートすると、1280 色を特色として追加できます。
+Scribus の色設定ダイアログから同梱の [DIC Labパレット](integrations/scribus/palettes/DIC_Lab.xml)をインポートすると、1280 色を特色として追加できます。登録済みDIC名は、AI書き出し時にCMYK基準へそろえます。[変更と検証の記録](docs/dic-cmyk-reference.md)。
 
 TOYO spot colors are also supported. Import the separate [TOYO COLOR FINDER palette](integrations/scribus/palettes/TOYO_COLOR_FINDER_Lab.xml) or [TOYO 94 palette](integrations/scribus/palettes/TOYO_94_Lab.xml) in Scribus. Names such as `CF 10001`, `CF10001`, and `TOYO 0001` resolve to the corresponding Lab spot swatches.
 

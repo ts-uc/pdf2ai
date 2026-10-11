@@ -317,6 +317,8 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
         index = (1 if page_number is None else page_number)-1
         if not 0 <= index < len(pdf.pages): raise ConversionError("Page number is out of range")
         page = pdf.pages[index]
+        from .dic import normalize_pdf_spots
+        normalized_dic = normalize_pdf_spots(page)
         fallback_reason = None
         conversion_mode = 'vector'
         try:
@@ -339,9 +341,17 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
             if not raster_fallback: raise
             from .rasterize import render_drawing
             fallback_reason = str(exc)
-            drawing = render_drawing(source,index,raster_dpi)
+            if normalized_dic:
+                with tempfile.TemporaryDirectory(prefix='pdf2ai-dic-', dir=output.parent) as directory:
+                    normalized = Path(directory)/'normalized.pdf'
+                    pdf.save(normalized)
+                    drawing = render_drawing(normalized,index,raster_dpi)
+            else:
+                drawing = render_drawing(source,index,raster_dpi)
             conversion_mode = 'raster-fallback'
             meta,private = make_private(drawing, source.name)
+        if normalized_dic:
+            drawing.color_conversions.append('DIC spot alternate colors normalized to legacy CMYK book: '+', '.join(normalized_dic))
         # Remove pages in reverse order so page dictionaries/resources remain owned
         # by this PDF, including OutputIntents and embedded color profiles.
         for i in range(len(pdf.pages)-1,-1,-1):

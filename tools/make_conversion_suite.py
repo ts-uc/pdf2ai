@@ -236,7 +236,7 @@ def build_native(path,temporary):
     add('ExtGState line style',document('/Line gs 30 50 m 130 150 l 240 50 l S',pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(Line=pikepdf.Dictionary(LW=5,LC=2,LJ=1,ML=8,D=[[8,4],2])))), 'LW LC LJ ML D via gs')
     add('Transforms and graphics state',document('q 1.5 0 0 1.5 30 20 cm 3 w [5 2] 1 d 0 0 80 80 re S Q q 0.866 0.5 -0.5 0.866 230 50 cm 0 0.7 0.3 rg 0 0 100 90 re f Q q 1 0.2 0.4 0.8 260 30 cm 0.7 0 0.4 rg 0 0 90 90 re f Q'), 'q/Q; translation, uniform scale, rotation; shear/nonuniform fills')
     add('RGB, CMYK and gray',document('1 0 0 rg 20 40 60 100 re f 0 1 0 rg 90 40 60 100 re f 0 0 1 rg 160 40 60 100 re f 0 1 0 0 k 230 40 60 100 re f 0.5 g 300 40 60 100 re f'), 'DeviceRGB / DeviceCMYK / DeviceGray')
-    add('Spot tints and overprint',spot_scene(),'Type2/Type4; tints; OPM1; DIC CMYK to Lab book / Lab input')
+    add('Spot tints and overprint',spot_scene(),'Type2/Type4; tints; OPM1; DIC legacy CMYK book / Lab input')
     feature_pdf(temporary/'features.pdf');add('Forms, clipping, radial, all 16 blends',pikepdf.open(temporary/'features.pdf'),'nested resources, Form BBox/matrix; W*; fill/stroke opacity')
     for model in ['RGB','CMYK','Gray']:
         for radial in [False,True]:add(f'{model} '+('radial' if radial else 'axial')+' gradient',gradient_scene(model,radial), 'direct sh; extended ends; Type2 function')
@@ -343,8 +343,8 @@ def main():
                     if name=='native':
                         if report['gradients']!=10 or report['images']!=17 or len(report['spots'])!=4 or report['outlined_glyphs']<1000:
                             raise AssertionError(f'Missing native feature: {report}')
-                        if sum(s['alternate_space']=='Lab' for s in report['spots'])!=2:
-                            raise AssertionError('Missing DIC Lab swatches')
+                        if sum(s['alternate_space']=='CMYK' and s['name'].startswith('DIC ') for s in report['spots'])!=2:
+                            raise AssertionError('Missing DIC CMYK swatches')
                         layers=report['layers']
                         if not any(l['locked'] and not l['printable'] for l in layers) or not any(not l['visible'] for l in layers):
                             raise AssertionError('Missing layer attributes')
@@ -365,7 +365,17 @@ def main():
                         if converted.pages[0].obj.PieceInfo.Illustrator.Private.CreatorVersion!=24:raise AssertionError('Wrong AI version')
                     with pymupdf.open(dest) as converted:
                         matrix=pymupdf.Matrix(0.35,0.35) if name=='native' else pymupdf.Matrix(1,1)
-                        if original[i].get_pixmap(matrix=matrix).samples!=converted[0].get_pixmap(matrix=matrix).samples:raise AssertionError(f'Preview changed: {name}/{i+1}')
+                        if name == 'native':
+                            from pdf2ai.dic import normalize_pdf_spots
+                            with pikepdf.open(source) as normalized:
+                                normalize_pdf_spots(normalized.pages[i])
+                                buffer = BytesIO()
+                                normalized.save(buffer)
+                                with pymupdf.open(stream=buffer.getvalue(), filetype='pdf') as expected:
+                                    expected_pixels = expected[i].get_pixmap(matrix=matrix).samples
+                        else:
+                            expected_pixels = original[i].get_pixmap(matrix=matrix).samples
+                        if expected_pixels!=converted[0].get_pixmap(matrix=matrix).samples:raise AssertionError(f'Preview changed: {name}/{i+1}')
                     report['input']=str(source.relative_to(ROOT))
                     report['output']=str(dest.relative_to(ROOT))
                     reports.append(report);print(f'PASS {name} page {i+1}: {report["conversion_mode"]}')
