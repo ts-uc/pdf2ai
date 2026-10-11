@@ -36,10 +36,13 @@ Keep the downloaded project folder together; use the script from its original lo
 2. Choose **Script → Execute Script** and select [`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py). / **スクリプト → スクリプトを実行**から同ファイルを選びます。
 3. Choose the pages: `all` for all pages, `current` for the current page, or `1,3-5` for specific pages. / 対象ページを入力します。`all` は全ページ、`current` は現在のページ、`1,3-5` は指定ページです。
 4. Choose **ページ別のAIファイル** (separate files) or **対象ページを1つのAIファイルにまとめる** (one file), select the output filename, then click **書き出し** (Export). / **書き出し方法**でページ別または1つのAIにまとめる方法を選び、保存先とファイル名を指定して**書き出し**を押します。
+5. Review the preflight results, then click **書き出し** to proceed. / **書き出し前チェック**で画像化されるページ・理由を確認して、**書き出し**を押します。画像化禁止が有効で未対応ページがある場合は書き出せません。
 
 Separate output saves each page in an AI file, with original page numbers such as `design_001.ai`. Combined output saves the selected pages as separate artboards in a single `design.ai`. Next time, you can select the script from Scribus's recent scripts.
 
 ページ別出力では、複数ページのファイル名に`design_001.ai`のように元のページ番号が付きます。まとめる場合は、選択した各ページを独立したアートボードとして1つの`design.ai`に保存します。初期設定はページ別です。次回からは Scribus の最近使ったスクリプトから実行できます。
+
+全ページの変換が成功してからAIを一式保存します。途中の変換失敗やキャンセルでは既存AIを保持し、保存中の通常のエラーでは元のファイルへ復元します。PDF作成後はScribus連携の進捗画面で検査・変換の状況を確認し、キャンセルできます。保存・復元中はキャンセルできません。詳しい動作と検証範囲は[対応記録](docs/scribus-export-safety.md)を参照してください。
 
 To use DIC colors, register them as **spot colors** in Scribus. Names such as `DIC 1` and `DIC 4` are also accepted and exported as the corresponding DIC Lab swatches.
 

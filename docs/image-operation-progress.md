@@ -1,5 +1,7 @@
 # 追加の画像・運用改善
 
+Scribusの事前検査・一括公開・進捗とキャンセルは後続作業で対応した。[対応記録](scribus-export-safety.md)を参照。以前のタイムアウト時の部分出力やScribusキャンセル未対応の記述は履歴。
+
 単独のデスクトップGUIは後続作業で削除した。以下のTk GUI関連の記述は履歴で、現行機能・残課題ではない。[削除の記録](desktop-gui-removal.md)。
 
 後続の単独GUI削除と最新の検証件数は[削除の記録](desktop-gui-removal.md)を参照。

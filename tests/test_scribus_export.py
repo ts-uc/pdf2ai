@@ -115,18 +115,6 @@ def test_child_environment_removes_embedded_python_settings(monkeypatch):
     assert environment['PYTHONIOENCODING']=='utf-8'
 
 
-def test_conversion_timeout_reports_partial_output_and_passes_limit(monkeypatch):
-    received=[]
-    def expired(command,timeout=None):
-        received.append(timeout)
-        raise subprocess.TimeoutExpired(command,timeout)
-    monkeypatch.setattr(bridge,'run_child',expired)
-    with pytest.raises(RuntimeError,match='完了済み'):
-        bridge.run_conversion_child(['worker'],2)
-    assert received==[120]
-    with pytest.raises(ValueError):bridge.run_conversion_child(['worker'],-1)
-
-
 def test_run_child_reaps_timed_out_process():
     with pytest.raises(subprocess.TimeoutExpired):
         bridge.run_child([sys.executable,'-c','import time; time.sleep(2)'],timeout=.05)

@@ -151,7 +151,7 @@ def build_export_dialog(document, count, current):
     dpi.setRange(72, 1200)
     dpi.setValue(int(RASTER_DPI))
     layout.addWidget(dpi)
-    layout.addWidget(QLabel('変換の制限時間（分。0は制限なし）'))
+    layout.addWidget(QLabel('検査・変換の制限時間（各処理／分。0は制限なし）'))
     timeout = QSpinBox()
     timeout.setObjectName('timeout_minutes')
     timeout.setRange(0,1440)
@@ -195,15 +195,6 @@ def build_export_dialog(document, count, current):
     return dialog
 
 
-def run_conversion_child(command, minutes=0):
-    if type(minutes) is not int or not 0 <= minutes <= 1440:
-        raise ValueError('変換の制限時間は0〜1440分で指定してください。')
-    try:
-        return run_child(command, timeout=minutes*60 if minutes else None)
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError('変換の制限時間を超えたため停止しました。ページ別出力では完了済みのAIが残る場合があります。') from error
-
-
 def export_dialog(document, count, current):
     from PySide6.QtWidgets import QApplication, QDialog
     app = QApplication.instance() or QApplication(['pdf2ai-scribus'])
@@ -232,10 +223,9 @@ def export_pdf(scribus, path, pages, options=None):
         raise RuntimeError('ScribusのPDF書き出しが完了しませんでした。')
 
 
-def convert_export(request):
+def prepare_request(request):
     sys.path.insert(0, str(ROOT / 'src'))
     import pikepdf
-    from pdf2ai.native import convert
     source = Path(request['pdf'])
     pages = request['pages']
     if not pages or any(type(p) is not int or p < 1 for p in pages) or len(set(pages)) != len(pages):
@@ -245,57 +235,101 @@ def convert_export(request):
         raise ValueError('Raster DPI must be between 72 and 1200')
     output_mode = request.get('output_mode', 'separate')
     outputs, report_path = output_paths(request['output'], pages, output_mode)
-    write_report = bool(request.get('write_report', False))
-    destinations = outputs + ([report_path] if write_report else [])
+    destinations = outputs + ([report_path] if request.get('write_report', False) else [])
     if any(path.is_dir() for path in destinations):
         raise ValueError('出力先がファイルではなくフォルダーです。保存先を変更してください。')
-    overwrite = bool(request.get('overwrite', False))
-    if not overwrite:
-        existing = [path for path in destinations if path.exists()]
+    if not request.get('overwrite', False):
+        existing = [path for path in destinations if os.path.lexists(path)]
         if existing:
             raise FileExistsError('出力が既に存在します: ' + ', '.join(path.name for path in existing))
     if source.resolve() in {p.resolve() for p in destinations}:
         raise ValueError('Input/output path conflict')
     with pikepdf.open(source) as pdf:
+        if pdf.is_encrypted:raise ValueError('Encrypted PDFs are unsupported')
         if len(pdf.pages) != len(pages):
             raise ValueError('ScribusのPDFページ数が対象ページ数と一致しません。')
+    return source,pages,dpi,output_mode,outputs,report_path
+
+
+def inspect_export(request, emit=lambda event: None):
+    source,pages,dpi,mode,outputs,report_path = prepare_request(request)
+    from pdf2ai.preflight import inspect_document
     results = []
-    if output_mode == 'combined':
-        from pdf2ai.multiboard import convert_document
-        try:
-            results = convert_document(source, outputs[0], page_labels=pages, overwrite=overwrite,
-                                       raster_fallback=not request.get('strict', STRICT), raster_dpi=dpi)
-            for report in results:
-                report['input'] = request.get('document', 'Scribus document')
-                report['output'] = outputs[0].name
-        except Exception as error:
-            results = [{'page': page, 'output': outputs[0].name, 'error': str(error)} for page in pages]
-    for index, (page, output) in enumerate(zip(pages, outputs) if output_mode == 'separate' else [], 1):
-        try:
-            report = convert(source, output, page_number=index, overwrite=overwrite,
-                             raster_fallback=not request.get('strict', STRICT), raster_dpi=dpi)
-            report['input'] = request.get('document', 'Scribus document')
-            report['page'] = page
-            report['output'] = output.name
-        except Exception as error:
-            report = {'page': page, 'output': output.name, 'error': str(error)}
-        results.append(report)
-    summary = {'document': request.get('document', 'Scribus document'), 'output_mode': output_mode, 'results': results}
-    if not write_report:
-        return summary
-    # Publish the report without truncating a previous file on failure/races.
-    descriptor, temporary = tempfile.mkstemp(prefix='.pdf2ai-report-', dir=report_path.parent)
-    try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
-            json.dump(summary, stream, ensure_ascii=False, indent=2)
-            stream.write('\n')
-        if overwrite:
-            os.replace(temporary, report_path)
+    for index,page in enumerate(pages,1):
+        emit({'phase':'inspect','current':index-1,'total':len(pages),'page':page})
+        item = inspect_document(source,pages=[index],raster_dpi=dpi)[0]
+        item['page'] = page
+        results.append(item)
+    emit({'phase':'inspect','current':len(pages),'total':len(pages)})
+    return {'inspection_only':True,'results':results,
+            'strict':bool(request.get('strict',STRICT)),
+            'can_export':not request.get('strict',STRICT) or all(r['native_supported'] for r in results),
+            'combined_constraints_checked':False}
+
+
+def wait_for_publication(request, emit, total):
+    import time
+    permit = request.get('commit_permission')
+    if permit:
+        emit({'phase':'ready_to_publish','current':total,'total':total})
+        deadline = time.monotonic()+60
+        while not Path(permit).exists():
+            if time.monotonic()>deadline:raise RuntimeError('出力公開の確認を受け取れませんでした。AIは公開していません。')
+            time.sleep(.02)
+    else:emit({'phase':'publish','current':total,'total':total})
+
+
+def convert_export(request, emit=lambda event: None):
+    source,pages,dpi,mode,outputs,report_path = prepare_request(request)
+    from pdf2ai.native import convert
+    from pdf2ai.batch_publish import publish_batch
+    results = []
+    summary = {'document':request.get('document','Scribus document'),
+               'output_mode':mode,'results':results,'committed':False}
+    with tempfile.TemporaryDirectory(prefix='.pdf2ai-batch-',dir=request.get('work_dir',outputs[0].parent)) as directory:
+        staging = Path(directory)
+        staged = [staging/p.name for p in outputs]
+        if mode == 'combined':
+            from pdf2ai.multiboard import convert_document
+            emit({'phase':'convert','current':0,'total':len(pages)})
+            try:
+                # Only this single staged AI is created; no final output is visible.
+                results.extend(convert_document(source,staged[0],page_labels=pages,
+                    raster_fallback=not request.get('strict',STRICT),raster_dpi=dpi,
+                    progress=lambda page,done,total: emit({'phase':'convert','current':done,'total':total,'page':page})))
+            except Exception as error:
+                results.extend({'page':p,'output':outputs[0].name,'error':str(error)} for p in pages)
         else:
-            os.link(temporary, report_path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+            for index,(page,output) in enumerate(zip(pages,staged),1):
+                emit({'phase':'convert','current':index-1,'total':len(pages),'page':page})
+                try:
+                    result = convert(source,output,page_number=index,
+                        raster_fallback=not request.get('strict',STRICT),raster_dpi=dpi)
+                    result['page'] = page
+                except Exception as error:
+                    result = {'page':page,'output':output.name,'error':str(error)}
+                results.append(result)
+                emit({'phase':'convert','current':index,'total':len(pages),'page':page})
+        for result in results:
+            result['input'] = request.get('document','Scribus document')
+            result['output'] = outputs[0].name if mode=='combined' else outputs[pages.index(result['page'])].name
+            result['published'] = False
+        success = all('error' not in r for r in results)
+        files = list(zip(staged,outputs)) if success else []
+        if success:
+            summary['committed'] = True
+            for result in results:result['published'] = True
+        if request.get('write_report',False):
+            staged_report = staging/report_path.name
+            staged_report.write_text(json.dumps(summary,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+            files.append((staged_report,report_path))
+        if files:
+            wait_for_publication(request,emit,len(pages))
+            try:publish_batch(files,overwrite=bool(request.get('overwrite',False)))
+            except Exception:
+                summary['committed'] = False
+                for result in results:result['published'] = False
+                raise
     return summary
 
 
@@ -336,19 +370,25 @@ def scribus_main(scribus):
             request = {'pdf': str(pdf), 'pages': pages, 'output': str(Path(chosen)),
                        'overwrite': overwrite, 'strict': options.get('strict', STRICT),
                        'dpi': options.get('dpi', RASTER_DPI), 'document': document.name,
-                       'write_report': write_report, 'output_mode': output_mode}
+                       'write_report': write_report, 'output_mode': output_mode,
+                       'timeout_minutes':options.get('timeout_minutes',0)}
             request_path = directory / 'request.json'
             request_path.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
             scribus.progressSet(1)
             scribus.statusMessage('AI書き出し：{}ページを変換しています…'.format(len(pages)))
-            result = run_conversion_child([python, str(Path(__file__).resolve()), '--worker', str(request_path)],
-                                          options.get('timeout_minutes',0))
+            result = run_child([python, str(Path(__file__).resolve()), '--export-session', str(request_path)])
             if result.returncode not in (0, 1):
                 raise RuntimeError((result.stderr or result.stdout or '変換処理を開始できませんでした。').strip()[-2000:])
             summary = json.loads(result.stdout)
+        if summary.get('cancelled'):
+            scribus.messageBox('AI書き出し','制限時間を超えたため停止しました。AIは公開していません。' if summary.get('timed_out') else '書き出しをキャンセルしました。AIは公開していません。',scribus.ICON_INFORMATION)
+            return
+        if summary.get('error'):raise RuntimeError(summary['error'])
         errors = [r for r in summary['results'] if 'error' in r]
         rasterized = [r for r in summary['results'] if r.get('rasterized')]
-        lines = ['保存：{} / 成功{}ページ'.format(outputs[0].parent, len(pages) - len(errors))]
+        saved = len(pages) if summary.get('committed') else 0
+        lines = ['保存：{} / 保存済み{}ページ'.format(outputs[0].parent,saved)]
+        if not summary.get('committed'):lines.append('一部の変換に失敗したため、AIは一式を公開していません。既存AIを保持します。')
         lines.append('書き出し方法：' + ('1つのAIファイル（' + outputs[0].name + '）' if output_mode == 'combined' else 'ページ別のAIファイル'))
         if write_report:
             lines.append('レポート：' + report_path.name)
@@ -365,10 +405,13 @@ def scribus_main(scribus):
 
 
 def main():
-    if any(flag in sys.argv for flag in ('--check', '--worker', '--dialog')):
+    if any(flag in sys.argv for flag in ('--check', '--worker', '--dialog','--inspect','--export-session')):
         parser = argparse.ArgumentParser()
         parser.add_argument('--check', action='store_true')
         parser.add_argument('--worker', type=Path)
+        parser.add_argument('--inspect',type=Path)
+        parser.add_argument('--export-session',type=Path)
+        parser.add_argument('--events',action='store_true')
         parser.add_argument('--dialog', action='store_true')
         parser.add_argument('--document', default='')
         parser.add_argument('--count', type=int)
@@ -384,8 +427,16 @@ def main():
             if args.dialog:
                 print(json.dumps(export_dialog(args.document, args.count, args.current), ensure_ascii=False))
                 return 0
-            summary = convert_export(json.loads(args.worker.read_text(encoding='utf-8')))
-            print(json.dumps(summary, ensure_ascii=False))
+            if args.export_session:
+                from progress_dialog import run_export_session
+                summary = run_export_session(args.export_session,Path(__file__).resolve())
+            else:
+                emit = (lambda event: print(json.dumps(event,ensure_ascii=False),flush=True)) if args.events else (lambda event: None)
+                config = args.inspect or args.worker
+                request = json.loads(config.read_text(encoding='utf-8'))
+                summary = inspect_export(request,emit) if args.inspect else convert_export(request,emit)
+            print(json.dumps({'kind':'result','summary':summary} if args.events else summary, ensure_ascii=False),flush=True)
+            if summary.get('error'):return 1
             return int(any('error' in r for r in summary['results']))
         except Exception as error:
             print(str(error), file=sys.stderr)
@@ -406,5 +457,5 @@ def main():
 if __name__ == '__main__':
     # Scribus shares its interpreter with the host; never call sys.exit there.
     result = main()
-    if any(flag in sys.argv for flag in ('--worker', '--check', '--dialog')):
+    if any(flag in sys.argv for flag in ('--worker', '--check', '--dialog','--inspect','--export-session')):
         raise SystemExit(result)

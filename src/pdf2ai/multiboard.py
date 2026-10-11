@@ -77,7 +77,7 @@ def translate_drawing(drawing, box, page):
 
 
 def convert_document(source, output, *, page_labels=None, pages=None, overwrite=False,
-                     raster_fallback=True, raster_dpi=300):
+                     raster_fallback=True, raster_dpi=300, progress=None):
     """Convert all pages atomically; a failed page prevents publishing the AI."""
     source, output = Path(source), Path(output)
     if source.resolve() == output.resolve():
@@ -118,6 +118,7 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
                                     'raster-fallback' if reason else 'vector', reason, raster_dpi, False, 0)
             report['page'] = labels[index]
             reports.append(report)
+            if progress is not None:progress(labels[index],index+1,len(selected))
         boxes = arrange_pages(drawings)
         shifted = [translate_drawing(d, b, p) for d, b, p in zip(drawings, boxes, labels)]
         combined_model = 'RGB' if any(d.color_model == 'RGB' for d in shifted) else 'CMYK'
