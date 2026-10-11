@@ -11,6 +11,7 @@ from dataclasses import replace
 
 import pikepdf
 from PIL import Image
+from fontTools.pens.boundsPen import BoundsPen
 
 from .codec import MARKER, compress, decode_private
 from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, BLEND_MODES, read_drawing
@@ -55,6 +56,31 @@ def path_commands(path):
     if path.closed and commands and commands[-1][1][-2:] != commands[0][1]:
         return [*commands, ('L', commands[0][1])]
     return commands
+
+
+def axial_geometry(item, gradient):
+    """Normalize the PDF ramp to Illustrator's projected geometric bounds."""
+    pen = BoundsPen(None)
+    for path in item.paths:
+        for op, values in path.commands:
+            if op == 'm': pen.moveTo(values)
+            elif op in ('L','l'): pen.lineTo(values)
+            elif op in ('C','c'): pen.curveTo(values[:2],values[2:4],values[4:])
+            else: raise ConversionError(f'Unsupported gradient path command: {op}')
+        if path.closed: pen.closePath()
+        else: pen.endPath()
+    if pen.bounds is None: raise ConversionError('Empty gradient geometry')
+    x0,y0,x1,y1 = pen.bounds
+    dx,dy = gradient.end[0]-gradient.start[0],gradient.end[1]-gradient.start[1]
+    length = math.hypot(dx,dy)
+    if length<1e-10: raise ConversionError('Degenerate gradient vector')
+    ux,uy = dx/length,dy/length
+    projections = [x*ux+y*uy for x,y in ((x0,y0),(x1,y0),(x1,y1),(x0,y1))]
+    first,last = min(projections),max(projections)
+    span = last-first
+    if span<1e-10: raise ConversionError('Degenerate gradient carrier')
+    offset = (gradient.start[0]*ux+gradient.start[1]*uy-first)/span
+    return offset, math.degrees(math.atan2(dy,dx)), length/span
 
 
 def native_items(drawing):
@@ -131,6 +157,10 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
         body += [f"%AI5_BeginGradient: {ps_string(gradient.name)}",
                  f"{ps_string(gradient.name)} {int(gradient.radial)} {len(gradient.stops)} Bd", "["]
         for position,color in (gradient.stops if gradient.radial else reversed(gradient.stops)):
+            # A gray ramp in an RGB document is otherwise interpolated using
+            # Illustrator's working-gray tone curve, unlike PDF DeviceGray.
+            if color.model == 'Gray' and drawing.color_model == 'RGB':
+                color = Color('RGB', color.values * 3)
             command = color_command(color).rsplit(' ',1)[0]
             style = {'Gray':0,'CMYK':1,'RGB':2}[color.model]
             body.append(f"{command} {style} 1 6 50 {num(position*100)} %_BS")
@@ -226,15 +256,16 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
                 x,y = gradient.start
                 dx,dy = gradient.end[0]-x,gradient.end[1]-y
                 body.append('Bb')
-                if gradient.radial: body.append('0 0 0 0 Bh')
-                # Geometry is already carried by Xm/Bm. Translating Bg again
-                # displaces axial gradients when artwork is placed in a Form.
-                tx,ty = (0,0)
                 if gradient.radial:
-                    body.append(f'1 {ps_string(gradient.name)} 0 0 0 1 1 0 0 1 0 0 1 Bg')
-                else:
-                    angle=math.degrees(math.atan2(dy,dx))
-                    body.append(f'1 {ps_string(gradient.name)} 0 0 {num(angle)} 1 1 0 0 1 {num(tx)} {num(ty)} 1 Bg')
+                    if gradient.focus is None:
+                        body.append('0 0 0 0 Bh')
+                    else:
+                        fx,fy = gradient.focus[0]-x,gradient.focus[1]-y
+                        body.append(f'0 0 {num(math.degrees(math.atan2(fy,fx)))} {num(math.hypot(fx,fy)/math.hypot(dx,dy))} Bh')
+                # CC2020's final Bg flag selects normalized geometry. Xm/Bm
+                # cannot substitute for its ramp offset and length.
+                offset,angle,length = (0,0,1) if gradient.radial else axial_geometry(item,gradient)
+                body.append(f'1 {ps_string(gradient.name)} {num(offset)} 0 {num(angle)} {num(length)} 1 0 0 1 0 0 1 Bg')
                 if not gradient.radial:
                     body.append(f'{num(dx)} {num(dy)} {num(dy)} {num(-dx)} {num(x)} {num(y)} Xm')
                 body.append(f'{num(dx)} {num(dy)} {num(dy)} {num(-dx)} {num(x)} {num(y)} Bm')

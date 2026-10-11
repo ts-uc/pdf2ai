@@ -55,7 +55,8 @@ def translate_drawing(drawing, box, page):
         if isinstance(value, Gradient):
             return replace(value, name=f'Page {page} / {value.name}',
                            start=(value.start[0]+dx, value.start[1]+dy),
-                           end=(value.end[0]+dx, value.end[1]+dy))
+                           end=(value.end[0]+dx, value.end[1]+dy),
+                           focus=(value.focus[0]+dx,value.focus[1]+dy) if value.focus is not None else None)
         return value
     items = []
     x0, y0, x1, y1 = box

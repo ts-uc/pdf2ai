@@ -174,7 +174,7 @@ def test_editable_gradient_pattern_and_matrix(tmp_path):
     assert result['gradients']==1
     with pikepdf.open(out) as pdf:
         body=read_private(pdf)
-        assert b'1 (PDF gradient 1) 0 0 90 1 1 0 0 1 0 0 1 Bg' in body
+        assert b'1 (PDF gradient 1) 0.75 0 90 1 1 0 0 1 0 0 1 Bg' in body
         assert b'0 40 40 0 20 30 Xm' in body
         assert b'(PDF gradient 1) 0 2 Bd' in body and b'2 1 6 50 100 %_BS' in body
     before=out.read_bytes()

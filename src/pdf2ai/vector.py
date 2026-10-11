@@ -81,6 +81,7 @@ class Gradient:
     start: tuple[float, float]
     end: tuple[float, float]
     radial: bool = False
+    focus: tuple[float, float] | None = None
 
 
 @dataclass
@@ -182,9 +183,21 @@ def read_image(image, state: State) -> Raster:
             raise ConversionError("Only grayscale image soft masks are supported")
         if (int(mask.Width),int(mask.Height)) != (width,height) or str(mask.get('/ColorSpace')) != '/DeviceGray' or int(mask.get('/BitsPerComponent',0)) != 8:
             raise ConversionError("Image soft mask must be 8-bit grayscale with matching dimensions")
-        if any(mask.get(k) is not None for k in ('/Decode','/Matte','/Mask','/SMask')):
+        if any(mask.get(k) is not None for k in ('/Matte','/Mask','/SMask')):
             raise ConversionError("Custom or nested image soft masks are unsupported")
-        alpha = pikepdf.PdfImage(mask).as_pil_image().convert('L').tobytes()
+        mask_decode = mask.get('/Decode')
+        if mask_decode is not None:
+            limits = tuple(map(float,mask_decode))
+            if len(limits)!=2 or not all(math.isfinite(v) and 0<=v<=1 for v in limits):
+                raise ConversionError('Invalid soft mask Decode')
+            del mask['/Decode']
+        try:
+            alpha = pikepdf.PdfImage(mask).as_pil_image().convert('L').tobytes()
+        finally:
+            if mask_decode is not None: mask['/Decode'] = mask_decode
+        if mask_decode is not None:
+            table = bytes(round(255*(limits[0]+(limits[1]-limits[0])*i/255)) for i in range(256))
+            alpha = alpha.translate(table)
         # PdfImage would combine/premultiply the mask. Extract the unassociated
         # color channels separately and always restore the PDF's original mask.
         del image['/SMask']
@@ -452,23 +465,37 @@ def read_drawing(page, *, root=None) -> Drawing:
             matrix = tuple(map(float,pattern.get('/Matrix', IDENTITY)))
             coords = tuple(map(float,shading.get('/Coords', [])))
             radial = int(shading.ShadingType) == 3
+            focus = None
             if radial:
-                if len(coords)!=6 or coords[0:2]!=coords[3:5] or coords[2]!=0 or coords[5]<=0:
-                    raise ConversionError("Only concentric radial gradients starting at radius zero are supported")
-                coords = (coords[0],coords[1],coords[3]+coords[5],coords[4])
+                if len(coords)!=6 or not all(math.isfinite(v) for v in coords) or coords[2]!=0 or coords[5]<=0 or math.dist(coords[:2],coords[3:5])>=coords[5]:
+                    raise ConversionError("Only concentric or interior-focus radial gradients starting at radius zero are supported")
+                focus = coords[:2] if coords[:2]!=coords[3:5] else None
+                coords = (coords[3],coords[4],coords[3]+coords[5],coords[4])
             if len(matrix)!=6 or len(coords)!=4 or not all(math.isfinite(v) for v in (*matrix,*coords)):
                 raise ConversionError("Invalid gradient coordinates")
             # Pattern matrices map from pattern space to the page's initial user
             # space, independent of the current path CTM.
             matrix = compose(pattern_base,matrix)
             a,b,c,d,_,_ = matrix
-            if not math.isclose(a*a+b*b,c*c+d*d,rel_tol=1e-8,abs_tol=1e-8) or not math.isclose(a*c+b*d,0,abs_tol=1e-8):
+            if radial and (not math.isclose(a*a+b*b,c*c+d*d,rel_tol=1e-8,abs_tol=1e-8) or not math.isclose(a*c+b*d,0,abs_tol=1e-8)):
                 raise ConversionError("Nonuniform or skewed gradient matrices are unsupported")
             start,end = point(matrix,*coords[:2]),point(matrix,*coords[2:])
+            if focus is not None: focus = point(matrix,*focus)
+            if not radial:
+                # Axial color varies along a covector. Transforming endpoints
+                # alone is incorrect for shear/nonuniform scaling: use A^-T.
+                vx,vy = coords[2]-coords[0],coords[3]-coords[1]
+                det = a*d-b*c
+                if abs(det)<1e-12: raise ConversionError("Singular gradient matrix")
+                nx,ny = (d*vx-b*vy)/det,(-c*vx+a*vy)/det
+                denominator = nx*nx+ny*ny
+                if denominator<1e-16: raise ConversionError("Degenerate gradient vector")
+                scale = (vx*vx+vy*vy)/denominator
+                end = (start[0]+nx*scale,start[1]+ny*scale)
             if math.dist(start,end)<1e-8: raise ConversionError("Degenerate gradient vector")
-            key = (tuple(stops),start,end,radial)
+            key = (tuple(stops),start,end,radial,focus)
             if key not in gradient_cache:
-                gradient_cache[key] = Gradient(f"PDF gradient {len(gradient_cache)+1}",tuple(stops),start,end,radial)
+                gradient_cache[key] = Gradient(f"PDF gradient {len(gradient_cache)+1}",tuple(stops),start,end,radial,focus)
             return gradient_cache[key]
         values = tuple(float(v) for v in values)
         if not all(math.isfinite(v) and 0 <= v <= 1 for v in values):
@@ -565,9 +592,14 @@ def read_drawing(page, *, root=None) -> Drawing:
                 if font is None: raise ConversionError("Missing PDF font resource")
                 from .fonts import OutlineFont
                 key = font.objgen
-                if key==(0,0): raise ConversionError("Direct PDF font dictionaries are unsupported")
-                if key not in font_cache: font_cache[key] = OutlineFont(font)
-                state.text_font = font_cache[key];state.font_size = float(args[1])
+                if key==(0,0):
+                    # Direct dictionaries all share objgen (0,0), so don't cache
+                    # them together or reuse another Form's font definition.
+                    state.text_font = OutlineFont(font)
+                else:
+                    if key not in font_cache: font_cache[key] = OutlineFont(font)
+                    state.text_font = font_cache[key]
+                state.font_size = float(args[1])
                 if not math.isfinite(state.font_size): raise ConversionError("Invalid text size")
             elif op in ('Tc','Tw','Tz','TL','Tr','Ts'):
                 value = float(args[0])
