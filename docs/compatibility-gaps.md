@@ -27,5 +27,6 @@
 図形のソフトマスク、ページ透明グループ、OutputIntentを含む色管理、曲線近似の精度・処理量、実制作データの検証。文字の編集可能性、ICCグラデーション、特殊なフォントや条件付きレイヤーは、データ構造や描画の検証を伴う課題。
 
 今回の追加対応と、未対応を残した理由は[追加の画像・運用改善](image-operation-progress.md)を参照。
+GUIの進捗・終了通知・キャンセル待ちと、手動確認の制限は[GUIの対応記録](gui-operation-progress.md)を参照。
 
 最新の実機比較・対応範囲の拡張は ../output/fidelity-check/README.md と technical.md に記録する。
