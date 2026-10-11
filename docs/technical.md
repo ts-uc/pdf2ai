@@ -119,6 +119,8 @@ pdf2ai text.pdf -o text.ai --outline-text --ghostscript "C:\Program Files\gs\gs1
 
 通常の特色は元PDFの色定義とCMYK代替値を使用します。DIC特色は、同梱の1280色の色名に一致する場合、DICカラーブックのLab値を持つ特色スウォッチとしてAIの編集データに出力します。追加の設定は不要で、Scribus連携でも有効です。塗りと線の濃度を保持します。末尾の`s`や`*`を省略した名前も自動照合し、`DIC 1`は`DIC 1s`、`DIC 4`は`DIC 4s*`のように正式なスウォッチ名で出力します。同じ色の省略名と正式名は1つのスウォッチにまとめます。登録されていない名前は元のCMYK特色として扱います。DIC名が失われたプロセスCMYKからは復元できないため、ScribusではDIC色を特色として登録してください。
 
+東洋インキも独立した`data/toyo_lab.json`と`toyo.py`で照合します。TOYO COLOR FINDERの1079色とTOYO 94の1050色を収録し、Scribus用パレットもDICとは別ファイルです。`CF10001`・`CF 10001`・`TOYO CF10001`・`TOYO 10001`は現行版の`CF 10001*`、`TOYO 1`は旧版の`TOYO 0001`へ照合します。番号を新旧の近似色へ読み替える処理はしません。対応するLab入力は元PDFのLab値を保持し、CMYK入力はカラーブックのLab値を編集データへ設定します。未登録のCMYK特色は元の定義を保持します。[TOYOのデータ出典・対応範囲](toyo-spot-colors.md)。
+
 DIC特色のLab入力（D50、線形Type 2）と、Labを代替色に持つLab ICCプロファイル入力にも対応します。この場合は入力のLab値を保持します。JSONレポートの`spots`にはAI編集データの色空間と色値を記録します。AIのPDF表示部分は従来どおり元PDFを保持するため、元のCMYK表示とLabで編集・再保存した表示に差が出る場合があります。同梱データは`src/pdf2ai/data/dic_lab.json`にあり、Illustratorや外部のパレットファイルを実行時に必要としません。
 
 Scribus用パレットは`integrations/scribus/palettes/DIC_Lab.xml`です。JSONの全1280色について正式名とLab値を保持し、`SPACE="Lab"`・`Spot="1"`・`Register="0"`で定義しています。CMYKへの変換は行いません。

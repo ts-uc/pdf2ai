@@ -704,10 +704,15 @@ def _calculator(function, tint: float) -> tuple[float, ...]:
 
 def read_spot(space) -> Spot:
     from .dic import dic_color, dic_name
+    from .toyo import toyo_color, toyo_name
     name = str(space[1])[1:]
     reference = dic_color(name)
     if reference is not None:
         name = dic_name(name)
+    else:
+        reference = toyo_color(name)
+        if reference is not None:
+            name = toyo_name(name)
     alternate = space[2]
     if isinstance(alternate,pikepdf.Array) and str(alternate[0]) == '/ICCBased':
         profile = alternate[1]
@@ -715,11 +720,11 @@ def read_spot(space) -> Spot:
             alternate = profile.get('/Alternate')
     is_lab = isinstance(alternate,pikepdf.Array) and str(alternate[0]) == '/Lab'
     if str(space[0]) != "/Separation" or not (str(alternate) == '/DeviceCMYK' or is_lab and reference):
-        raise ConversionError("Only CMYK or registered DIC Lab Separation spots are supported")
+        raise ConversionError("Only CMYK or registered DIC/TOYO Lab Separation spots are supported")
     if is_lab:
         white = tuple(float(v) for v in alternate[1].get('/WhitePoint',[]))
         if len(white)!=3 or any(abs(a-b)>0.001 for a,b in zip(white,(0.964203,1,0.824905))):
-            raise ConversionError("DIC Lab spots require D50 white point")
+            raise ConversionError("Registered Lab spots require D50 white point")
     fn = space[3]
     kind = int(fn.get("/FunctionType", -1))
     if list(fn.get("/Domain", [])) != [0, 1]:

@@ -52,6 +52,10 @@ Import the supplied [DIC palette](integrations/scribus/palettes/DIC_Lab.xml) in 
 
 Scribus の色設定ダイアログから同梱の [DIC パレット](integrations/scribus/palettes/DIC_Lab.xml)をインポートすると、1280 色を特色として追加できます。
 
+TOYO spot colors are also supported. Import the separate [TOYO COLOR FINDER palette](integrations/scribus/palettes/TOYO_COLOR_FINDER_Lab.xml) or [TOYO 94 palette](integrations/scribus/palettes/TOYO_94_Lab.xml) in Scribus. Names such as `CF 10001`, `CF10001`, and `TOYO 0001` resolve to the corresponding Lab spot swatches.
+
+東洋インキの特色にも対応しています。Scribusで、DICとは別ファイルの[TOYO COLOR FINDERパレット](integrations/scribus/palettes/TOYO_COLOR_FINDER_Lab.xml)（1079色）または[TOYO 94パレット](integrations/scribus/palettes/TOYO_94_Lab.xml)（1050色）をインポートしてください。`CF 10001`・`CF10001`・`TOYO 0001`などの名前を対応するLab特色へ照合します。現行版と旧版の番号は別々に扱います。文字や図形をプロセスカラーで作った後に、名前だけで特色を復元する機能ではありません。詳しくは[TOYO対応記録](docs/toyo-spot-colors.md)を参照してください。
+
 **Check your output before submitting artwork.** This tool is experimental. Text becomes outlines, and pages containing unsupported features become images. Check the completion message and the resulting artwork.
 
 **入稿前に出力を確認してください。** 実験的なツールのため、文字はアウトラインになり、未対応機能を含むページは画像になります。完了メッセージと、書き出した内容を確認してください。
