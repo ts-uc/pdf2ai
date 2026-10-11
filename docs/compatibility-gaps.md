@@ -1,6 +1,6 @@
 # 残る互換性の課題
 
-後続のCLI・API・GUI・Scribusの入力検査と終了処理の修正は[再点検の対応記録](automatic-review-fixes.md)を参照。自動テスト302件、統合14ページ成功。描画互換性の全対応を意味しない。
+入力検査の修正は[再点検の対応記録](automatic-review-fixes.md)、単独GUIの削除は[削除の記録](desktop-gui-removal.md)を参照。現行の自動テスト290件、統合14ページ成功。描画互換性の全対応を意味しない。
 
 2026-10-11。vector.py、fonts.py、layers.pyの拒否条件と実機検証結果を照合した一覧。テスト件数や保存成功だけで、全機能対応・全ファイルの見た目の一致を保証するものではない。
 
@@ -29,6 +29,6 @@
 図形のソフトマスク、ページ透明グループ、OutputIntentを含む色管理、曲線近似の精度・処理量、実制作データの検証。文字の編集可能性、ICCグラデーション、特殊なフォントや条件付きレイヤーは、データ構造や描画の検証を伴う課題。
 
 今回の追加対応と、未対応を残した理由は[追加の画像・運用改善](image-operation-progress.md)を参照。
-GUIの進捗・終了通知・キャンセル待ちと、手動確認の制限は[GUIの対応記録](gui-operation-progress.md)を参照。
+単独のデスクトップGUIは削除した。Tk画面の手動確認は残課題から除外する。[削除の記録](desktop-gui-removal.md)を参照。
 
 最新の実機比較・対応範囲の拡張は ../output/fidelity-check/README.md と technical.md に記録する。

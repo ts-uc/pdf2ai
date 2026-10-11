@@ -4,6 +4,8 @@ Create Adobe Illustrator CC2020 files from Scribus documents or PDFs without Ill
 
 Illustrator を使わずに、Scribus 文書や PDF を Adobe Illustrator CC2020 形式の AI ファイルに変換できます。Windows・macOS・GNU/Linux に対応しています。
 
+画面からの操作はScribusの書き出し設定画面に対応しています。PDFを直接変換する場合はCLIを使用します。
+
 ## Set up for Scribus / Scribus で使う準備
 
 You need **Scribus 1.6 or later with Scripter enabled** and **Python 3.10 or later**. Open a terminal in the folder containing this README, then run the commands below for your OS. This setup is needed only once.

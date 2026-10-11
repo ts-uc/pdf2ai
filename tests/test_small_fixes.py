@@ -4,7 +4,7 @@ import pytest
 from pdf2ai.vector import read_image, State, ConversionError
 from pdf2ai.native import convert
 from pdf2ai.preflight import inspect_document
-from test_image_samples_cancel import make_image, document
+from test_image_samples import make_image, document
 
 
 @pytest.mark.parametrize('model,channels',[('DeviceGray',1),('DeviceRGB',3),('DeviceCMYK',4)])

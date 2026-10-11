@@ -52,9 +52,9 @@ python -m pip install .
 
 macOS/Linuxでは環境によって`python`を`python3`に、Windowsでは`py`に読み替えてください。OS共通の依存パッケージはインストール時に入ります。通常の変換にIllustrator、Scribus、Inkscape、Ghostscriptは必要ありません。対応フォントの文字パス化と自動画像化にも追加ソフトは不要です。PyMuPDFとfontToolsはPythonパッケージとして自動でインストールされます。
 
-GUIにはTkinterが必要です。python.orgのWindows/macOS版には通常付属します。Ubuntu系Linuxでは必要に応じて`sudo apt install python3-tk`、Homebrew版Pythonでは対応する`python-tk`をインストールしてください。
+画面操作はScribus連携の設定画面だけを提供します。PySide6は`pip install ".[scribus]"`で導入します。Tkinterは必要ありません。
 
-## CLI and GUI options / CLI・GUIの詳細
+## CLI options / CLIの詳細
 
 ```sh
 # コマンドライン：出力名を指定
@@ -76,19 +76,16 @@ pdf2ai text.pdf -o text.ai --outline-text
 # WindowsなどでPATHにない場合は実行ファイルを指定
 pdf2ai text.pdf -o text.ai --outline-text --ghostscript "C:\Program Files\gs\gs10.xx.x\bin\gswin64c.exe"
 
-# デスクトップGUI
-pdf2ai-gui
 ```
 
 上記の例は`project`ディレクトリから実行してください。
 
-既存の出力を上書きする場合はCLIで`--overwrite`を指定します。GUIでは上書きを確認します。GUIはPDFの複数選択、ページ範囲、結合、進捗表示に対応し、終了時に保存・失敗・未処理ページ数を表示します。処理中は設定変更を無効にし、ウィンドウを閉じる操作はキャンセル待ちになります。処理終了後にもう一度閉じてください。画面の検証範囲は[GUIの対応記録](gui-operation-progress.md)を参照してください。
+既存の出力を上書きする場合はCLIで`--overwrite`を指定します。Scribus連携では設定画面で対象ページ・書き出し方法を選び、既存の出力がある場合は上書きを確認します。
 
 仮想環境を作成した場合は、プロジェクトのルートからランチャーを実行できます。
 
 ```sh
 .venv/bin/python run_pdf2ai.py sample/conversion_native.pdf -o output/test.ai
-.venv/bin/python run_pdf2ai.py --gui
 ```
 
 仮想環境は各PCで`python -m venv .venv`を実行して作成し、その環境のPythonで`pip install .`を実行してください。Windowsの仮想環境のPythonは`.venv\Scripts\python.exe`です。入力サンプルは`sample/`、生成AI・検証用PDF・レポートは`output/`にまとめてあり、どちらも`project`内にあります。`project`ディレクトリだけでテストと検証を実行できます。
@@ -125,11 +122,11 @@ Scribus用パレットは`integrations/scribus/palettes/DIC_Lab.xml`です。JSO
 
 編集データとして未対応：文字として編集可能なテキスト、複雑なフォント/CMap・縦書き・Type3、開始半径が0でない円形・焦点が終端円の外部／境界にある円形・メッシュグラデーション、グラデーションの線、円形グラデーションの非等方・せん断変換、タイルパターン、図形のソフトマスク、ページ全体の分離・ノックアウト、文書と異なる透明グループ色空間、DIC特色以外のLab、ICC付きグラデーション・非標準Range・元ICCの編集保持、DeviceN、丸以外の線端で長さ0を含む破線パターン・180度折り返す結合、ヘアライン、注釈、複雑なレイヤー条件（OCMD・別レイヤー条件の入れ子・排他切替）、特殊なDecode/Matte、インライン画像など。
 
-これらを検出すると、標準では**選択したページ全体**をPyMuPDFで描画し、透過を保持したRGB画像としてAIの編集部分に埋め込みます。部分的な画像化ではありません。既定は300dpiで、`--raster-dpi`は72～1200を指定できます。画像化したページの文字・パス・特色分版・レイヤー構造は編集データでは失われます。元PDFの表示データは保持します。CLIとGUIに画像化の理由を表示し、JSONレポートに`conversion_mode`、`rasterized`、`fallback_reason`、`raster_dpi`、`lost_features`を記録します。`--strict`またはGUIのチェックで画像化を禁止できます。
+これらを検出すると、標準では**選択したページ全体**をPyMuPDFで描画し、透過を保持したRGB画像としてAIの編集部分に埋め込みます。部分的な画像化ではありません。既定は300dpiで、`--raster-dpi`は72～1200を指定できます。画像化したページの文字・パス・特色分版・レイヤー構造は編集データでは失われます。元PDFの表示データは保持します。CLIとScribusの完了画面に画像化の理由を表示し、JSONレポートに`conversion_mode`、`rasterized`、`fallback_reason`、`raster_dpi`、`lost_features`を記録します。`--strict`またはScribus設定画面のチェックで画像化を禁止できます。
 
 画像化は4,000万ピクセルまでです。上限を超える場合は解像度を下げてください。破損・暗号化PDF、範囲外のページ、極端なページ寸法、レンダラーが描画できないPDFなどは引き続きエラーになります。複数ページは`--page`で1ページずつ変換します。
 
-追加オプション`--outline-text`はGhostscriptの`pdfwrite`と`-dNoOutputFonts`を使用します。macOSでは`brew install ghostscript`、Ubuntu系では`sudo apt install ghostscript`、WindowsではGhostscriptの配布元からインストールしてください。`gs`、`gswin64c`、`gswin32c`をPATHから探し、見つからなければCLIで`--ghostscript`を指定できます。GUIはPATHからの検出に対応します。追加のPythonパッケージは不要です。元PDFに埋め込まれていないフォントはGhostscript側で代替される場合があります。文字はベクターパスになり、画像化しません。Ghostscriptによる前処理はページ全体に適用するため、線や色にも丸めなどの差が生じる可能性があります。元PDFの表示データはそのまま保持します。[Ghostscriptの仕様](https://ghostscript.readthedocs.io/en/gs10.05.0/VectorDevices.html)を参照してください。
+追加オプション`--outline-text`はGhostscriptの`pdfwrite`と`-dNoOutputFonts`を使用します。macOSでは`brew install ghostscript`、Ubuntu系では`sudo apt install ghostscript`、WindowsではGhostscriptの配布元からインストールしてください。`gs`、`gswin64c`、`gswin32c`をPATHから探し、見つからなければCLIで`--ghostscript`を指定できます。追加のPythonパッケージは不要です。元PDFに埋め込まれていないフォントはGhostscript側で代替される場合があります。文字はベクターパスになり、画像化しません。Ghostscriptによる前処理はページ全体に適用するため、線や色にも丸めなどの差が生じる可能性があります。元PDFの表示データはそのまま保持します。[Ghostscriptの仕様](https://ghostscript.readthedocs.io/en/gs10.05.0/VectorDevices.html)を参照してください。
 
 ## Layers / レイヤー
 
@@ -200,15 +197,6 @@ python tools/make_conversion_suite.py --verify
 自動テストは、変換元とAIのPDF表示の画素一致、統合サンプルの全14ページ、特色濃度、座標変換、未対応PDFの拒否、上書き防止、編集ストリームの圧縮・展開を検証します。
 
 Illustratorでの再保存後の表示を確認する小さなケースは`tools/make_fidelity_cases.py --run after`で生成できます。Illustratorの「その他のスクリプト」から`tools/illustrator_fidelity_check.jsx`を実行し、`python tools/compare_fidelity.py output/fidelity-check/after`で元PDFと再保存したPDFを144dpiで比較します。AIに保持した元PDFの表示だけを比較するテストと区別しています。比較画像と画素差の数値は同フォルダーに保存します。2026-10-11に回転・斜め・せん断・焦点付き円形などのグラデーション、文字の切り抜き、画像マスクを実機確認しました。RGBとCMYKの混在画像には、作業用プロファイルや再保存時の色変換に由来する可能性のある表示差が残っています。
-
-Python不要のGUI実行ファイルを配る場合は、**配布する各OS上で**ビルドしてください。
-
-```sh
-python -m pip install '.[build]'
-python -m PyInstaller --clean --noconfirm --onefile --windowed --name pdf2ai-gui --paths src --collect-data pdf2ai --collect-all pikepdf --collect-all pymupdf --collect-all fontTools --collect-all zstandard tools/gui_entry.py
-```
-
-このビルドにはPython 3.10～3.13を推奨します。Python 3.14では標準Zstandardを使うため、`--collect-all zstandard`は不要です。macOSの署名・公証やWindowsの署名は含んでいません。
 
 参考：[AdobeのAI形式説明](https://www.adobe.com/creativecloud/file-types/image/vector/ai-file.html)、[Adobe Illustratorの保存オプション](https://helpx.adobe.com/illustrator/using/saving-artwork.html)。
 

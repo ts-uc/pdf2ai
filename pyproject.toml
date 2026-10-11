@@ -12,11 +12,9 @@ dependencies = ["pikepdf>=9,<11", "PyMuPDF>=1.24,<2", "Pillow>=10", "fonttools>=
 [project.optional-dependencies]
 scribus = ["PySide6-Essentials>=6.6,<7"]
 test = ["pytest>=8,<10", "PyMuPDF>=1.24"]
-build = ["pyinstaller>=6"]
 
 [project.scripts]
 pdf2ai = "pdf2ai.cli:main"
-pdf2ai-gui = "pdf2ai.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

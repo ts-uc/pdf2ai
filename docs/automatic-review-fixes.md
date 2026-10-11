@@ -1,5 +1,7 @@
 # 再点検で見つかった不具合の修正
 
+単独のデスクトップGUIは後続作業で削除した。以下のTk GUI関連の記述は履歴で、現行機能・残課題ではない。[削除の記録](desktop-gui-removal.md)。
+
 2026-10-11。「自動で直すところをもう一度調べて」の依頼に対する追加点検。CLI・単ページAPI・結合・GUIの計画と終了通知・Scribusの出力先検査を確認した。全入力・全機能に不具合がないという監査ではない。
 
 ## 修正した不具合
@@ -24,4 +26,4 @@ CLIの画像化dpiも変換前に検査する。画像表現や色管理の未�
 
 Tkがないため、GUI画面の起動・目視・クリック確認、およびスレッド開始失敗からの画面復帰の実機確認はできていない。今回はIllustratorでの追加保存検証をしていない。今回の主な変更は描画データの生成ではなく、入力検査と終了処理である。実制作PDF、DIC 448、分版・実印刷、特殊な描画の未対応は引き続き残る。
 
-残る互換性は[compatibility-gaps.md](compatibility-gaps.md)、直前のGUI改善は[gui-operation-progress.md](gui-operation-progress.md)を参照。
+残る互換性は[compatibility-gaps.md](compatibility-gaps.md)、後続のGUI削除は[削除の記録](desktop-gui-removal.md)を参照。

@@ -4,7 +4,6 @@ import pytest
 from pdf2ai.vector import read_image, State, ConversionError
 from pdf2ai.native import convert
 from pdf2ai.multiboard import convert_document
-from pdf2ai.cancellation import ConversionCancelled
 
 
 def make_image(pdf, raw, width=1, height=1, bits=1, space='/DeviceRGB'):
@@ -66,30 +65,6 @@ def document(path):
         page=pdf.add_blank_page(page_size=(100,100))
         page.Contents=pdf.make_stream(b'1 0 0 rg 10 10 20 20 re f')
     pdf.save(path)
-
-
-def test_combined_cancel_between_pages_keeps_previous_output(tmp_path):
-    source=tmp_path/'source.pdf';output=tmp_path/'output.ai'
-    document(source);output.write_bytes(b'previous')
-    processed=[]
-    with pytest.raises(ConversionCancelled):
-        convert_document(source,output,overwrite=True,cancelled=lambda:bool(processed),
-                         progress=lambda page,done,total: processed.append((page,done,total)))
-    assert processed==[(1,1,3)] and output.read_bytes()==b'previous'
-
-
-def test_single_cancel_before_save_is_not_raster_fallback(tmp_path,monkeypatch):
-    source=tmp_path/'source.pdf';output=tmp_path/'output.ai'
-    document(source);output.write_bytes(b'previous')
-    import pdf2ai.native as native
-    original=native.make_private
-    stopped=[]
-    def serialize(*args,**kwargs):
-        result=original(*args,**kwargs);stopped.append(True);return result
-    monkeypatch.setattr(native,'make_private',serialize)
-    with pytest.raises(ConversionCancelled):
-        convert(source,output,page_number=1,overwrite=True,cancelled=lambda:bool(stopped))
-    assert output.read_bytes()==b'previous'
 
 
 def test_combination_normalizes_cmyk_images_when_destination_is_rgb(tmp_path,monkeypatch):

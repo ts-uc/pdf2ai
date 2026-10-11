@@ -4,7 +4,6 @@ import pytest
 from pdf2ai.cli import main, select_pages
 from pdf2ai.native import convert
 from pdf2ai.multiboard import convert_document
-from pdf2ai.gui_jobs import plan_jobs, run_jobs
 from pdf2ai.vector import ConversionError
 
 
@@ -69,24 +68,6 @@ def test_cli_report_directory_is_rejected_before_first_ai(tmp_path):
     document(source);report.mkdir()
     assert main([str(source),'--report',str(report)])==1
     assert not source.with_suffix('.ai').exists()
-
-
-def test_worker_fatal_error_has_explicit_failure_and_completion_event(tmp_path):
-    source=tmp_path/'input.pdf';document(source)
-    events=[]
-    def broken_cancellation():raise RuntimeError('unexpected worker error')
-    run_jobs(plan_jobs([source],tmp_path,'all',False),combined=False,overwrite=False,
-             strict=True,outline=False,resolution=300,cancelled=broken_cancellation,emit=events.append)
-    assert events[-1][0]=='done'
-    assert events[-1][1]['worker_error']=='unexpected worker error'
-    assert events[-1][1]['unprocessed']==1
-    assert not list(tmp_path.glob('*.ai'))
-
-
-def test_gui_output_directory_is_rejected_before_running_jobs(tmp_path):
-    source=tmp_path/'input.pdf';document(source);(tmp_path/'input_001.ai').mkdir()
-    with pytest.raises(ConversionError,match='フォルダー'):
-        plan_jobs([source],tmp_path,'1',False)
 
 
 def test_page_selector_normalizes_whitespace_and_rejects_zero_pages():

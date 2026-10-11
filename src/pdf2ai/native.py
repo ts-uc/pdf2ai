@@ -298,9 +298,7 @@ def read_private(pdf) -> bytes | None:
 
 
 def convert(source: Path | str, output: Path | str, *, page_number: int | None = None,
-            overwrite: bool = False, outline_text: bool = False, ghostscript: str | None = None, raster_fallback: bool = True, raster_dpi: float = 300, cancelled=None) -> dict:
-    from .cancellation import check_cancelled
-    check_cancelled(cancelled)
+            overwrite: bool = False, outline_text: bool = False, ghostscript: str | None = None, raster_fallback: bool = True, raster_dpi: float = 300) -> dict:
     source,output = Path(source),Path(output)
     if source.resolve() == output.resolve(): raise ConversionError("Input and output must differ")
     if output.suffix.lower() != ".ai": raise ConversionError("Output must have an .ai extension")
@@ -344,7 +342,6 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
             drawing = render_drawing(source,index,raster_dpi)
             conversion_mode = 'raster-fallback'
             meta,private = make_private(drawing, source.name)
-        check_cancelled(cancelled)
         # Remove pages in reverse order so page dictionaries/resources remain owned
         # by this PDF, including OutputIntents and embedded color profiles.
         for i in range(len(pdf.pages)-1,-1,-1):
