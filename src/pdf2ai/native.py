@@ -14,6 +14,8 @@ from PIL import Image
 from fontTools.pens.boundsPen import BoundsPen
 
 from .codec import MARKER, compress, decode_private
+from .document_defaults import (fill_artwork_bounds, align_page_settings, add_page_thumbnails,
+                                set_document_metadata, set_structured_metadata)
 from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, GroupBoundary, BLEND_MODES, STROKE_CURVE_FLATNESS, read_drawing
 
 
@@ -118,7 +120,7 @@ def layer_runs(drawing):
     counts = {}
     result = []
     for layer,items in runs:
-        name = layer.name if layer is not None else 'PDF artwork'
+        name = layer.name if layer is not None else 'レイヤー 1'
         counts[name] = counts.get(name,0)+1
         if counts[name]>1: name += f' ({counts[name]})'
         result.append((layer,name,items))
@@ -129,13 +131,33 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
     runs = layer_runs(drawing)
     x0,y0,x1,y1 = drawing.box
     box = " ".join(num(v) for v in drawing.box)
+    bx0, by0, bx1, by1 = fill_artwork_bounds(drawing) or drawing.box
+    artwork_box = ' '.join(num(value) for value in (bx0, by0, bx1, by1))
+    process_inks = set()
+    def record_inks(color):
+        if isinstance(color, Gradient):
+            for _, stop in color.stops:
+                record_inks(stop)
+        elif color.model == 'CMYK':
+            process_inks.update(name for name, value in zip(('Cyan', 'Magenta', 'Yellow', 'Black'), color.values) if value)
+        elif color.model == 'Gray' and color.values[0] != 1:
+            process_inks.add('Black')
+        elif color.model == 'RGB':
+            process_inks.update(('Cyan', 'Magenta', 'Yellow', 'Black'))
+    for item in drawing.items or drawing.paths:
+        if isinstance(item, PaintedPath):
+            if item.paint != 'stroke': record_inks(item.state.fill)
+            if item.paint != 'fill': record_inks(item.state.stroke)
+        elif isinstance(item, Raster):
+            process_inks.update(('Cyan', 'Magenta', 'Yellow', 'Black'))
+    process_colors = ' '.join(name for name in ('Cyan', 'Magenta', 'Yellow', 'Black') if name in process_inks)
     header = ["%!PS-Adobe-3.0", "%%Creator: Adobe Illustrator(R) 24.0",
               "%%AI8_CreatorVersion: 24.0.0", f"%%Title: {ps_string(title)}",
-              "%%Canvassize: 16383", f"%%BoundingBox: {math.floor(x0)} {math.floor(y0)} {math.ceil(x1)} {math.ceil(y1)}",
-              f"%%HiResBoundingBox: {box}", "%%DocumentProcessColors: Cyan Magenta Yellow Black",
+              "%%Canvassize: 16383", f"%%BoundingBox: {math.floor(bx0)} {math.floor(by0)} {math.ceil(bx1)} {math.ceil(by1)}",
+              f"%%HiResBoundingBox: {artwork_box}", '%%DocumentProcessColors:'+(' '+process_colors if process_colors else ''),
               "%AI5_FileFormat 14.0", "%AI12_BuildNumber: 0", "%AI3_ColorUsage: Color",
               "%AI7_ImageSettings: 0", f"%AI3_Cropmarks: {box}", "%AI3_DocumentPreview: None",
-              "%AI5_ArtSize: 14400 14400", "%AI5_RulerUnits: 1", "%AI24_LargeCanvasScale: 1",
+              "%AI5_ArtSize: 14400 14400", "%AI5_RulerUnits: 2", "%AI24_LargeCanvasScale: 1",
               f"%AI9_ColorModel: {1 if drawing.color_model == 'RGB' else 2}", "%AI5_ArtFlags: 0 0 0 1 0 0 1 0 0",
               "%AI5_TargetResolution: 800", f"%AI5_NumLayers: {len(runs)}"]
     if drawing.spots:
@@ -144,11 +166,12 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
         for i,spot in enumerate(drawing.spots):
             header.append(("%%CMYKCustomColor: " if i == 0 else "%%+ ") +
                           " ".join(num(v) for v in spot.cmyk) + " " + ps_string(spot.name))
-    header.append("%%EndComments")
+    header += ['%%CMYKProcessColor: 1 1 1 1 '+ps_string('[レジストレーション]'), "%%EndComments"]
     gradients = list(dict.fromkeys(item.state.fill for item in drawing.paths
                                    if item.paint != 'stroke' and isinstance(item.state.fill, Gradient)))
     body = ["%%BeginProlog", "%%EndProlog", "%%BeginSetup",
-            "%AI5_BeginPalette", "0 0 Pb"]
+            "%AI5_BeginPalette", "0 0 Pb", '1 1 1 1 '+ps_string('[レジストレーション]')+' 0 Xs',
+            ps_string('[レジストレーション]'), 'Pc']
     for spot in drawing.spots:
         body += [color_command(Color('Spot',(1,),spot)),
                  ps_string(spot.name), "Pc"]
@@ -169,8 +192,8 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
     body += ["%AI9_BeginDocumentData",
              "%_/Document :", "%_/Dictionary :", "%_16383 /Int (AIDocumentCanvasSize) ,",
              "%_/Array :"]
-    for name, (ax0, ay0, ax1, ay1) in artboards or [('Artboard 1', drawing.box)]:
-        body += ["%_/Dictionary :", "%_0 /Bool (IsArtboardDefaultName) ,",
+    for name, (ax0, ay0, ax1, ay1) in artboards or [('アートボード 1', drawing.box)]:
+        body += ["%_/Dictionary :", f"%_{int(artboards is None)} /Bool (IsArtboardDefaultName) ,",
              "%_0 /Bool (IsArtboardSelected) ,", "%_0 /Bool (IsArtboardLocked) ,",
              "%_/FillStyle : 0 1 0 0 0 Xy", "%_0 J 0 j 1 w 10 M []0 d",
              "%_0 XR", "%_0 0 Xd", "%_/Def ;", "%_ (EachArtboardColor) ,",
@@ -357,11 +380,12 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
         for i in range(len(pdf.pages)-1,-1,-1):
             if i != index: del pdf.pages[i]
         page = pdf.pages[0]
-        private_blocks = save_ai(pdf, output, meta, private, overwrite=overwrite)
+        align_page_settings(page, drawing)
+        private_blocks = save_ai(pdf, output, meta, private, overwrite=overwrite, drawings=[drawing])
     return drawing_report(drawing, source, output, index, conversion_mode, fallback_reason, raster_dpi, outline_text, private_blocks)
 
 
-def save_ai(pdf, output, meta, private, *, overwrite=False):
+def save_ai(pdf, output, meta, private, *, overwrite=False, drawings=None):
     """Attach one shared editing stream to every PDF page and publish atomically."""
     page = pdf.pages[0]
     compressed = MARKER+compress(private)
@@ -371,7 +395,8 @@ def save_ai(pdf, output, meta, private, *, overwrite=False):
                                     AIMetaData=pdf.make_stream(meta))
     if len(chunks)>1: dictionary.NumBlock = len(chunks)
     for i,chunk in enumerate(chunks,1): dictionary[f"/AIPrivateData{i}"] = pdf.make_stream(chunk)
-    timestamp = datetime.now(timezone.utc).strftime("D:%Y%m%d%H%M%SZ")
+    moment = datetime.now(timezone.utc)
+    timestamp = moment.strftime("D:%Y%m%d%H%M%SZ")
     piece = page.obj.get("/PieceInfo", pikepdf.Dictionary())
     piece.Illustrator = pikepdf.Dictionary(LastModified=pikepdf.String(timestamp),Private=dictionary)
     shared_piece = pdf.make_indirect(piece)
@@ -379,6 +404,8 @@ def save_ai(pdf, output, meta, private, *, overwrite=False):
         page.obj.PieceInfo = shared_piece
     pdf.docinfo["/Creator"] = AI_CREATOR
     pdf.docinfo["/Producer"] = AI_PRODUCER
+    set_document_metadata(pdf, output, moment, drawings)
+    add_page_thumbnails(pdf)
     # Do not claim PDF/X certification for a newly written file without preflight.
     for key in ("/GTS_PDFXVersion", "/GTS_PDFXConformance"):
         if key in pdf.docinfo: del pdf.docinfo[key]
@@ -387,6 +414,7 @@ def save_ai(pdf, output, meta, private, *, overwrite=False):
         metadata["pdf:Producer"] = AI_PRODUCER
         for key in ("pdfxid:GTS_PDFXVersion", "pdfx:GTS_PDFXVersion", "pdfx:GTS_PDFXConformance"):
             if key in metadata: del metadata[key]
+    set_structured_metadata(pdf, drawings, meta)
     fd,temporary = tempfile.mkstemp(prefix=".pdf2ai-",suffix=".ai",dir=output.parent)
     os.close(fd)
     try:

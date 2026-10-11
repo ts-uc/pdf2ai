@@ -8,6 +8,7 @@ import pikepdf
 
 from .layers import Layer
 from .native import drawing_report, make_private, save_ai
+from .document_defaults import align_page_settings
 from .vector import (Clip, ConversionError, Drawing, Gradient, GroupBoundary, PaintedPath, Raster,
                      Subpath, compose, read_drawing)
 
@@ -171,7 +172,9 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
             pdf.pages.append(original_pages[number-1])
         for _ in original_pages:
             del pdf.pages[0]
-        blocks = save_ai(pdf, output, meta, private, overwrite=overwrite)
+        for page, drawing in zip(pdf.pages, drawings):
+            align_page_settings(page, drawing)
+        blocks = save_ai(pdf, output, meta, private, overwrite=overwrite, drawings=drawings)
         for report, box in zip(reports, boxes):
             report.update(private_blocks=blocks, artboard_box=list(box))
         return reports
