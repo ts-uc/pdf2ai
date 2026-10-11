@@ -13,6 +13,17 @@ from make_conversion_suite import document, gradient_scene, image_scene
 
 
 def cases():
+    for name,matrix in (('shear','1.5 0.2 0.5 0.7 20 20'),('reflection','-1.5 0.2 0.5 0.7 350 20')):
+        for dashed in (False,True):
+            style='[23 13] 7 d' if dashed else ''
+            for cap in (0,1,2):
+                yield f'curve-open-{name}-d{int(dashed)}-c{cap}',document(f'q {matrix} cm 0.2 0.4 0.8 RG 8 w {cap} J {style} 20 20 m 65 155 145 -25 180 110 c S Q')
+            yield f'curve-closed-{name}-d{int(dashed)}',document(f'q {matrix} cm 0.2 0.4 0.8 RG 8 w 1 J {style} 20 65 m 20 40.147 55.817 20 100 20 c 144.183 20 180 40.147 180 65 c 180 89.853 144.183 110 100 110 c 55.817 110 20 89.853 20 65 c h S Q')
+        for mode in (1,2):
+            yield f'curve-text-{name}-m{mode}',document(f'q {matrix} cm 0.8 0.2 0.2 rg 0.2 0.4 0.8 RG 1 w BT /F 55 Tf {mode} Tr 1 0 0 1 20 50 Tm (BC) Tj ET Q',pikepdf.Dictionary(Font=pikepdf.Dictionary(F=pikepdf.Dictionary(Type=pikepdf.Name.Font,Subtype=pikepdf.Name.Type1,BaseFont=pikepdf.Name.Helvetica))))
+    yield 'curve-shorthand-v',document('q 1.5 0.2 0.5 0.7 20 20 cm 0.2 0.4 0.8 RG 8 w 1 J 20 20 m 145 110 180 110 v S Q')
+    yield 'curve-shorthand-y',document('q 1.5 0.2 0.5 0.7 20 20 cm 0.2 0.4 0.8 RG 8 w 1 J 20 20 m 65 110 180 110 y S Q')
+    yield 'curve-alpha',document('q 1.5 0.2 0.5 0.7 20 20 cm /A gs 0.2 0.4 0.8 RG 8 w 1 J 20 20 m 65 155 145 -25 180 110 c S Q',pikepdf.Dictionary(ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(CA=.4))))
     for bits in (1,2,4,8):
         pdf=image_scene('indexed');image=pdf.pages[0].Resources.XObject.Im
         row=bytearray((8*bits+7)//8)

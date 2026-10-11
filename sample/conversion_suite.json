@@ -252,8 +252,8 @@
     },
     {
       "page": 3,
-      "title": "Nonuniform curved stroke transform",
-      "reason_contains": "Nonuniform",
+      "title": "Nonuniform reversing stroke transform",
+      "reason_contains": "nonuniform",
       "expected_mode": "raster-fallback"
     },
     {

@@ -193,7 +193,7 @@ def test_nonuniform_straight_strokes_preserve_edges_and_state(tmp_path,matrix,ca
     assert not convert(source,tmp_path/'stroke.ai',raster_fallback=False)['rasterized']
 
 
-@pytest.mark.parametrize('path',['0 0 m 30 0 l h S','[0 3] 0 d 0 0 m 30 0 l S','0 0 m 30 0 30 30 0 30 c S'])
+@pytest.mark.parametrize('path',['0 0 m 30 0 l h S','[0 3] 0 d 0 0 m 30 0 l S'])
 def test_complex_nonuniform_strokes_still_rejected(path):
     from pdf2ai.vector import ConversionError
     pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
@@ -434,3 +434,59 @@ def test_invalid_indexed_color_key_is_rejected_without_mutating_image(mask):
     page.Resources=pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im=image));page.Contents=pdf.make_stream(b'/Im Do')
     with pytest.raises(ConversionError):read_drawing(page)
     assert list(image.Mask)==mask
+
+
+@pytest.mark.parametrize('matrix',[(2,0,0,.5,20,20),(1,.3,.6,1,30,15),(-2,0,0,.5,250,20)])
+def test_curve_subdivision_preserves_endpoints_and_centerline(matrix):
+    from pdf2ai.vector import flatten_stroke_path,STROKE_CURVE_FLATNESS
+    controls=[point(matrix,*p) for p in ((0,0),(20,80),(80,-20),(100,40))]
+    path=Subpath([('m',controls[0]),('C',tuple(v for p in controls[1:] for v in p))])
+    flattened=flatten_stroke_path(path,State(matrix=matrix,width=8))
+    vertices=[coords for _,coords in flattened.commands]
+    assert vertices[0]==controls[0] and vertices[-1]==controls[-1]
+    assert 2<len(vertices)<=8191
+    def distance(p,a,b):
+        dx,dy=b[0]-a[0],b[1]-a[1];u=max(0,min(1,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/(dx*dx+dy*dy)))
+        return ((p[0]-a[0]-u*dx)**2+(p[1]-a[1]-u*dy)**2)**.5
+    for i in range(101):
+        t=i/100;s=1-t
+        actual=tuple(s**3*controls[0][j]+3*s*s*t*controls[1][j]+3*s*t*t*controls[2][j]+t**3*controls[3][j] for j in (0,1))
+        assert min(distance(actual,a,b) for a,b in zip(vertices,vertices[1:]))<=STROKE_CURVE_FLATNESS
+    assert path.commands[1][0]=='C'
+
+
+@pytest.mark.parametrize('dash',[False,True])
+@pytest.mark.parametrize('closed',[False,True])
+def test_nonuniform_cubic_strokes_report_approximation(tmp_path,dash,closed):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(250,150))
+    style='[20 8] 3 d' if dash else '';close='h' if closed else ''
+    page.Contents=pdf.make_stream(f'1.5 .2 .5 .7 20 20 cm 8 w 1 J {style} 0 0 m 20 80 80 -20 100 40 c {close} S'.encode())
+    drawing=read_drawing(page)
+    assert drawing.approximated_strokes==drawing.outlined_strokes==1
+    shifted=translate_drawing(drawing,(-250,-150,0,0),1)
+    assert shifted.approximated_strokes==1
+    source=tmp_path/'curve.pdf';pdf.save(source)
+    result=convert(source,tmp_path/'curve.ai',raster_fallback=False)
+    assert result['approximated_strokes']==1 and result['stroke_curve_flatness_pt']==.0025
+    assert not result['rasterized']
+
+
+@pytest.mark.parametrize('mode',[1,2,5,6])
+def test_nonuniform_stroked_text_is_outlined_and_keeps_clip(mode,tmp_path):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(250,150))
+    page.Resources=pikepdf.Dictionary(Font=pikepdf.Dictionary(F=pikepdf.Dictionary(Type=pikepdf.Name.Font,Subtype=pikepdf.Name.Type1,BaseFont=pikepdf.Name.Helvetica)))
+    page.Contents=pdf.make_stream(f'1.5 .2 .5 .7 20 20 cm 1 w BT /F 30 Tf {mode} Tr 1 0 0 1 20 50 Tm (BC) Tj ET 1 0 0 rg 0 0 100 100 re f'.encode())
+    drawing=read_drawing(page)
+    assert drawing.outlined_glyphs==2 and drawing.approximated_strokes>0
+    assert bool(drawing.paths[-1].state.clips)==(mode>=4)
+    source=tmp_path/'text.pdf';pdf.save(source)
+    assert not convert(source,tmp_path/'text.ai',raster_fallback=False)['rasterized']
+
+
+def test_excessive_curve_subdivision_is_rejected_atomically(tmp_path):
+    from pdf2ai.vector import ConversionError
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Contents=pdf.make_stream(b'1000000 0 0 1 0 0 cm 8 w 0 0 m 20 80 80 -20 100 40 c S')
+    source=tmp_path/'large.pdf';pdf.save(source);target=tmp_path/'existing.ai';target.write_bytes(b'original')
+    with pytest.raises(ConversionError):convert(source,target,overwrite=True,raster_fallback=False)
+    assert target.read_bytes()==b'original'

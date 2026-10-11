@@ -297,7 +297,7 @@ def build_fallback(path,temporary):
     pdf.pages[0].obj.Group=pikepdf.Dictionary(S=pikepdf.Name.Transparency,CS=pikepdf.Name.DeviceRGB,K=True)
     add('Knockout transparency group',pdf,'nonknockout')
     add('Hairline stroke',document('0 w 30 50 m 350 160 l S',size=A4),'hairline')
-    add('Nonuniform curved stroke transform',document('q 2 0 0 1 30 50 cm 4 w 0 0 m 50 120 100 -20 150 100 c S Q',size=A4),'Nonuniform')
+    add('Nonuniform reversing stroke transform',document('q 2 0 0 1 30 50 cm 4 w 0 0 m 150 100 l 0 0 l S Q',size=A4),'nonuniform')
     lab=pikepdf.Array([pikepdf.Name.Lab,pikepdf.Dictionary(WhitePoint=[0.9505,1,1.089])])
     add('Lab color space',document('/L cs 65 30 20 scn 30 50 300 120 re f',pikepdf.Dictionary(ColorSpace=pikepdf.Dictionary(L=lab)),size=A4),'Color components')
     pdf=document('0 0.5 1 rg 30 50 300 120 re f',size=A4)

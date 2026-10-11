@@ -158,6 +158,48 @@ class Drawing:
     layers: list = field(default_factory=list)
     outlined_glyphs: int = 0
     outlined_strokes: int = 0
+    approximated_strokes: int = 0
+
+
+STROKE_CURVE_FLATNESS = 0.0025
+
+
+def flatten_stroke_path(path,state):
+    """Adaptively subdivide cubic centerlines before constructing stroke bands."""
+    a,b,c,d,_,_=state.matrix;det=a*d-b*c
+    if abs(det)<1e-12:raise ConversionError('Singular stroke transformation')
+    radius_bound=state.width/2*math.sqrt(a*a+b*b+c*c+d*d)
+    commands=[]
+    def midpoint(p,q):return (p[0]+q[0])/2,(p[1]+q[1])/2
+    def flatten(p0,p1,p2,p3,depth=0):
+        dx,dy=p3[0]-p0[0],p3[1]-p0[1];length=math.hypot(dx,dy)
+        flat=length>1e-12 and max(abs(dx*(p[1]-p0[1])-dy*(p[0]-p0[0]))/length for p in (p1,p2))<=STROKE_CURVE_FLATNESS
+        ux,uy=(d*dx-c*dy)/det,(-b*dx+a*dy)/det;user_length=math.hypot(ux,uy)
+        if flat and user_length>1e-12:
+            for first,last in zip((p0,p1,p2),(p1,p2,p3)):
+                X,Y=last[0]-first[0],last[1]-first[1]
+                vx,vy=(d*X-c*Y)/det,(-b*X+a*Y)/det;size=math.hypot(vx,vy)
+                if size>1e-12:
+                    cosine=max(-1,min(1,(vx*ux+vy*uy)/(size*user_length)))
+                    if cosine<=0 or radius_bound*(1-cosine)>STROKE_CURVE_FLATNESS:flat=False;break
+        if flat:
+            if not commands or commands[-1][1]!=p3:commands.append(('L',p3))
+            if len(commands)>8191:raise ConversionError('Stroke curve exceeds subdivision limit')
+            return
+        if depth>=22:raise ConversionError('Stroke curve cannot meet subdivision criteria')
+        a0,a1,a2=midpoint(p0,p1),midpoint(p1,p2),midpoint(p2,p3)
+        b0,b1=midpoint(a0,a1),midpoint(a1,a2);middle=midpoint(b0,b1)
+        flatten(p0,a0,b0,middle,depth+1);flatten(middle,b1,a2,p3,depth+1)
+    current=None
+    for op,coords in path.commands:
+        if op=='m':commands.append((op,coords));current=coords
+        elif op=='L':commands.append((op,coords));current=coords
+        elif op=='C' and current is not None:
+            p1,p2,p3=coords[:2],coords[2:4],coords[4:6]
+            if current==p1==p2==p3:continue
+            flatten(current,p1,p2,p3);current=p3
+        else:raise ConversionError('Unsupported stroke curve command')
+    return Subpath(commands,path.closed)
 
 
 def outline_rectangle_stroke(path,state):
@@ -308,6 +350,7 @@ def outline_straight_strokes(paths, state):
         raise ConversionError('Singular stroke transformation')
     result=[]
     for path in paths:
+        if any(op=='C' for op,_ in path.commands):path=flatten_stroke_path(path,state)
         if path.closed or len(path.commands)!=2:
             if path.closed and len(path.commands)==4 and not state.dash and state.join==0 and state.miter>=math.sqrt(2):
                 try:
@@ -770,9 +813,10 @@ def read_drawing(page, *, root=None) -> Drawing:
     font_cache = {}
     outlined_glyphs = 0
     outlined_strokes = 0
+    approximated_strokes = 0
 
     def show_text(string):
-        nonlocal text_matrix,outlined_glyphs
+        nonlocal text_matrix,outlined_glyphs,outlined_strokes,approximated_strokes
         if state.text_font is None: raise ConversionError("Text shown without a font")
         font = state.text_font
         for code in font.codes(string):
@@ -791,14 +835,22 @@ def read_drawing(page, *, root=None) -> Drawing:
                 if paint!='fill' and isinstance(state.stroke,Gradient): raise ConversionError("Gradient text strokes are unsupported")
                 a,b,c,d,_,_ = state.matrix
                 stroke_scale = math.hypot(a,b)
-                if paint!='fill' and (state.width==0 or not math.isclose(stroke_scale,math.hypot(c,d),abs_tol=1e-7) or not math.isclose(a*c+b*d,0,abs_tol=1e-7)):
-                    raise ConversionError("Hairline/nonuniform text strokes are unsupported")
-                paints = ('fill','stroke') if paint=='both' and (isinstance(state.fill,Gradient) or state.fill_alpha!=state.stroke_alpha) else (paint,)
+                if paint!='fill' and state.width==0:raise ConversionError('Hairline text strokes are unsupported')
+                nonuniform=paint!='fill' and (not math.isclose(stroke_scale,math.hypot(c,d),abs_tol=1e-7) or not math.isclose(a*c+b*d,0,abs_tol=1e-7))
+                outlines=outline_straight_strokes(glyph_paths,state) if nonuniform else None
+                if nonuniform:
+                    outlined_strokes+=len(glyph_paths)
+                    approximated_strokes+=sum(any(op=='C' for op,_ in p.commands) for p in glyph_paths)
+                paints = ('fill','stroke') if paint=='both' and (nonuniform or isinstance(state.fill,Gradient) or state.fill_alpha!=state.stroke_alpha) else (paint,)
                 if len(paints)==2 and (state.fill_alpha!=1 or state.stroke_alpha!=1 or state.blend_mode!='Normal'):
                     raise ConversionError('Splitting combined text fill/stroke with transparency requires knockout compositing')
                 for paint_mode in paints:
                     glyph_state = copy(state);glyph_state.layer = active_layer
-                    item = PaintedPath(glyph_paths,glyph_state,paint_mode,False,stroke_scale)
+                    if nonuniform and paint_mode=='stroke':
+                        if not outlines:continue
+                        glyph_state.fill=state.stroke;glyph_state.fill_alpha=state.stroke_alpha;glyph_state.fill_overprint=state.stroke_overprint
+                        item=PaintedPath(outlines,glyph_state,'fill',False,1)
+                    else:item = PaintedPath(glyph_paths,glyph_state,paint_mode,False,stroke_scale)
                     painted.append(item);items.append(item)
             if glyph_paths and mode!=3: outlined_glyphs += 1
             advance = (width*state.font_size/1000+state.char_spacing+(state.word_spacing if code==32 and not font.cid else 0))*state.horizontal_scale
@@ -1042,7 +1094,9 @@ def read_drawing(page, *, root=None) -> Drawing:
                 scale = math.hypot(a,b)
                 nonuniform = paint != 'fill' and (not math.isclose(scale,math.hypot(c,d),abs_tol=1e-7) or not math.isclose(a*c+b*d,0,abs_tol=1e-7))
                 outlines = outline_straight_strokes(paths,state) if nonuniform else None
-                if nonuniform: outlined_strokes += len(paths)
+                if nonuniform:
+                    outlined_strokes += len(paths)
+                    approximated_strokes += sum(any(op=='C' for op,_ in path.commands) for path in paths)
                 if any(len(path.commands)>8191 for path in paths):
                     raise ConversionError("A subpath exceeds Illustrator's 8191-segment limit")
                 paints = ('fill','stroke') if paint == 'both' and (nonuniform or isinstance(state.fill,Gradient) or state.fill_alpha != state.stroke_alpha) else (paint,)
@@ -1093,4 +1147,4 @@ def read_drawing(page, *, root=None) -> Drawing:
             for value in colors:
                 models.update(c.model for _,c in value.stops) if isinstance(value,Gradient) else models.add(value.model)
     color_model = ('RGB' if str(group.get('/CS')) == '/DeviceRGB' else 'CMYK') if group is not None else ('RGB' if 'RGB' in models and not models.intersection({'CMYK','Spot'}) else 'CMYK')
-    return Drawing(box, painted, list(used_spots.values()), operators, images, items, color_model, list(layer_map.values()),outlined_glyphs,outlined_strokes)
+    return Drawing(box, painted, list(used_spots.values()), operators, images, items, color_model, list(layer_map.values()),outlined_glyphs,outlined_strokes,approximated_strokes)

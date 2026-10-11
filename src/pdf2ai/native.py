@@ -14,7 +14,7 @@ from PIL import Image
 from fontTools.pens.boundsPen import BoundsPen
 
 from .codec import MARKER, compress, decode_private
-from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, BLEND_MODES, read_drawing
+from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, BLEND_MODES, STROKE_CURVE_FLATNESS, read_drawing
 
 
 AI_CREATOR = "Adobe Illustrator 24.0 (Macintosh)"
@@ -392,6 +392,8 @@ def drawing_report(drawing, source, output, index, conversion_mode, fallback_rea
             "lost_features":['editable paths/text','spot ink separation','layer structure'] if fallback_reason else [],
             "outlined_glyphs":drawing.outlined_glyphs,
             "outlined_strokes":drawing.outlined_strokes,
+            "approximated_strokes":drawing.approximated_strokes,
+            "stroke_curve_flatness_pt":STROKE_CURVE_FLATNESS if drawing.approximated_strokes else None,
             "text_outlined":(outline_text or drawing.outlined_glyphs>0) and conversion_mode=='vector',"page":index+1,"page_box":list(drawing.box),"painted_paths":len(drawing.paths),
             "subpaths":sum(len(p.paths) for p in drawing.paths),
             "segments":sum(len(s.commands) for p in drawing.paths for s in p.paths),
