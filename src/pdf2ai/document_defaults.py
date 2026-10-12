@@ -54,14 +54,34 @@ def align_page_settings(page, drawing):
     if bounds is not None and int(page.obj.get('/Rotate', 0)) == 0 and float(page.obj.get('/UserUnit', 1)) == 1:
         page.obj.ArtBox = pikepdf.Array(bounds)
     group = page.obj.get('/Group')
-    if bounds is None or group is None or drawing.color_model != 'CMYK':
+    if drawing.color_model != 'CMYK':
         return
-    if (str(group.get('/S')) == '/Transparency' and str(group.get('/CS')) == '/DeviceCMYK'
-            and not group.get('/I', False) and not group.get('/K', False)
-            and all(isinstance(item.state.fill, Color) and item.state.fill.model in ('CMYK', 'Gray', 'Spot')
-                    and (item.state.fill.spot is None or item.state.fill.spot.lab is None)
-                    and not item.state.fill_overprint for item in drawing.items or drawing.paths)):
-        del page.obj['/Group']
+    def opaque_cmyk(item):
+        if not isinstance(item, PaintedPath) or item.state.blend_mode != 'Normal':
+            return False
+        paints = []
+        if item.paint != 'stroke':
+            paints.append((item.state.fill,item.state.fill_alpha))
+        if item.paint != 'fill':
+            paints.append((item.state.stroke,item.state.stroke_alpha))
+        return all(alpha == 1 and isinstance(color,Color)
+                   and color.model in ('CMYK','Gray','Spot')
+                   and (color.spot is None or color.spot.lab is None)
+                   for color,alpha in paints)
+    # Adobe omits the redundant CMYK page blending group for opaque process
+    # and CMYK spot paths, including clipped/stroked paths. Retain the actual
+    # overprint states in the resources and editing stream.
+    if ((group is None or str(group.get('/S')) == '/Transparency'
+         and str(group.get('/CS')) == '/DeviceCMYK'
+         and not group.get('/I', False) and not group.get('/K', False))
+            and all(opaque_cmyk(item) for item in drawing.items or drawing.paths)):
+        if group is not None:
+            del page.obj['/Group']
+        # Illustrator's PDF export uses Perceptual for unprofiled CMYK.
+        # Leave explicit ri operators/ExtGState /RI settings able to override it.
+        page.contents_add(b'/Perceptual ri\n', prepend=True)
+        from .pdf_path_defaults import align_pdf_fill_paths
+        align_pdf_fill_paths(page)
 
 
 def add_page_thumbnails(pdf):
@@ -119,7 +139,12 @@ def set_document_metadata(pdf, output, moment, drawings):
         metadata['xmpMM:OriginalDocumentID'] = original_id or document_id
         metadata['xmpMM:InstanceID'] = 'uuid:'+str(uuid.uuid4())
         page_namespace = '{http://ns.adobe.com/xap/1.0/t/pg/}'
-        metadata[page_namespace+'NPages'] = str(len(pdf.pages))
+        # Illustrator counts the one editable document here, including when
+        # its PDF-compatible representation contains several artboard pages.
+        metadata[page_namespace+'NPages'] = '1'
+        metadata['xmpMM:RenditionClass'] = 'proof:pdf'
+        metadata['{http://ns.adobe.com/illustrator/1.0/}Type'] = 'Document'
+        metadata['{http://ns.adobe.com/illustrator/1.0/}IsFileSavedViaInstantSave'] = 'False'
         if drawings:
             items = [item for drawing in drawings for item in drawing.items or drawing.paths
                      if item.state.layer is None or item.state.layer.visible]
@@ -144,7 +169,7 @@ def set_document_metadata(pdf, output, moment, drawings):
             metadata[page_namespace+'HasVisibleOverprint'] = str(overprint)
 
 
-def set_structured_metadata(pdf, drawings, meta):
+def set_structured_metadata(pdf, drawings, meta, *, artboard_boxes=None):
     """Write actual page/swatch/preview data in the reference AI's XMP structures."""
     from PIL import Image
     namespaces = {
@@ -198,21 +223,56 @@ def set_structured_metadata(pdf, drawings, meta):
             color = resource(ET.SubElement(colors, tag('rdf', 'li')))
             value(color, 'xmpG', 'swatchName', spot.name)
             value(color, 'xmpG', 'type', 'SPOT')
-            value(color, 'xmpG', 'tint', 100)
+            value(color, 'xmpG', 'tint', '100.000000')
             value(color, 'xmpG', 'mode', 'LAB' if spot.lab is not None else 'CMYK')
             keys = ('L', 'A', 'B') if spot.lab is not None else ('cyan', 'magenta', 'yellow', 'black')
             values = spot.lab if spot.lab is not None else tuple(component*100 for component in spot.cmyk)
             for key, component in zip(keys, values):
-                value(color, 'xmpG', key, component)
-    thumbnail = pdf.pages[0].obj.Thumb
-    image = Image.frombytes('RGB', (int(thumbnail.Width), int(thumbnail.Height)), thumbnail.read_bytes())
+                value(color, 'xmpG', key, f'{component:.6f}')
+    image = document_preview(pdf, artboard_boxes)
     encoded = BytesIO(); image.save(encoded, format='JPEG', quality=75)
     previews = ET.SubElement(replace('xmp', 'Thumbnails'), tag('rdf', 'Alt'))
     preview = resource(ET.SubElement(previews, tag('rdf', 'li')))
-    value(preview, 'xmpGImg', 'width', thumbnail.Width)
-    value(preview, 'xmpGImg', 'height', thumbnail.Height)
+    value(preview, 'xmpGImg', 'width', image.width)
+    value(preview, 'xmpGImg', 'height', image.height)
     value(preview, 'xmpGImg', 'format', 'JPEG')
     value(preview, 'xmpGImg', 'image', base64.b64encode(encoded.getvalue()).decode('ascii'))
     xml = pdf.make_stream(ET.tostring(root, encoding='utf-8', xml_declaration=True))
     xml.Type = pikepdf.Name.Metadata; xml.Subtype = pikepdf.Name.XML
     pdf.Root.Metadata = xml
+
+
+def document_preview(pdf, artboard_boxes=None):
+    """Adobe's 256px artwork preview, independent of the small PDF thumbnails."""
+    import math
+    import pymupdf
+    from PIL import Image
+    buffer = BytesIO()
+    pdf.save(buffer)
+    with pymupdf.open(stream=buffer.getvalue(), filetype='pdf') as document:
+        if artboard_boxes is None:
+            page = document[0]
+            # Adobe previews artwork rather than surrounding blank paper.
+            clip = page.artbox & page.rect
+            if clip.is_empty:
+                clip = page.rect
+            scale = 256/max(clip.width, clip.height)
+            pixels = page.get_pixmap(matrix=pymupdf.Matrix(scale,scale), clip=clip,
+                                     colorspace=pymupdf.csRGB, alpha=False)
+            image = Image.frombytes('RGB',(pixels.width,pixels.height),pixels.samples)
+            # Raster rounding at a fractional clip origin can add one pixel.
+            image.thumbnail((256,256), Image.Resampling.LANCZOS)
+            return image
+        x0 = min(box[0] for box in artboard_boxes)
+        y0 = min(box[1] for box in artboard_boxes)
+        x1 = max(box[2] for box in artboard_boxes)
+        y1 = max(box[3] for box in artboard_boxes)
+        scale = 256/max(x1-x0,y1-y0)
+        image = Image.new('RGB',(max(1,math.ceil((x1-x0)*scale)),
+                                 max(1,math.ceil((y1-y0)*scale))), 'white')
+        for page,box in zip(document,artboard_boxes):
+            pixels = page.get_pixmap(matrix=pymupdf.Matrix(scale,scale),
+                                     colorspace=pymupdf.csRGB, alpha=False)
+            tile = Image.frombytes('RGB',(pixels.width,pixels.height),pixels.samples)
+            image.paste(tile,(round((box[0]-x0)*scale),round((y1-box[3])*scale)))
+        return image

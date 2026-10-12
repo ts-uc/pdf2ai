@@ -2,8 +2,12 @@
 import pikepdf
 import pytest
 import xml.etree.ElementTree as ET
+from io import BytesIO
+import base64
+import random
+from PIL import Image
 
-from pdf2ai.native import convert, read_private, ps_string
+from pdf2ai.native import convert, read_private, ps_string, make_private, save_ai
 from pdf2ai.document_defaults import fill_artwork_bounds
 from pdf2ai.multiboard import convert_document
 from pdf2ai.vector import read_drawing
@@ -68,11 +72,11 @@ def test_standard_defaults_keep_artwork_and_supply_real_document_metadata(tmp_pa
     b'2 w 10 20 30 40 re S',
     b'10 20 30 40 re W n 0 0 100 200 re f',
 ])
-def test_complex_artwork_keeps_group_and_artbox(tmp_path,commands):
+def test_opaque_complex_artwork_omits_redundant_group_and_keeps_artbox(tmp_path,commands):
     source=tmp_path/'source.pdf';output=tmp_path/'output.ai';document(source,commands)
     convert(source,output,raster_fallback=False)
     with pikepdf.open(output) as pdf:
-        assert '/Group' in pdf.pages[0].obj
+        assert '/Group' not in pdf.pages[0].obj
         assert list(pdf.pages[0].ArtBox)==[0,0,100,200]
 
 
@@ -177,6 +181,7 @@ def test_visible_flags_only_consider_used_paint_settings(tmp_path,stroke,used):
             ns='{http://ns.adobe.com/xap/1.0/t/pg/}'
             assert metadata[ns+'HasVisibleTransparency']==str(used)
             assert metadata[ns+'HasVisibleOverprint']==str(used)
+        assert ('/Group' in pdf.pages[0].obj)==used
 
 
 def test_hidden_artwork_does_not_set_visible_flags(tmp_path):
@@ -207,4 +212,83 @@ def test_combined_output_keeps_page_order_and_page_thumbnails(tmp_path):
         assert all('/Thumb' in page.obj and '/Group' not in page.obj for page in pdf.pages)
         assert all(list(page.ArtBox)==[10,20,40,60] for page in pdf.pages)
         with pdf.open_metadata(set_pikepdf_as_editor=False,update_docinfo=False) as metadata:
-            assert metadata['{http://ns.adobe.com/xap/1.0/t/pg/}NPages']=='2'
+            assert metadata['{http://ns.adobe.com/xap/1.0/t/pg/}NPages']=='1'
+
+
+def xmp_preview(pdf):
+    xml=ET.fromstring(pdf.Root.Metadata.read_bytes())
+    ns='{http://ns.adobe.com/xap/1.0/g/img/}'
+    data=base64.b64decode(xml.find('.//'+ns+'image').text)
+    image=Image.open(BytesIO(data));image.load()
+    assert image.size==(int(xml.find('.//'+ns+'width').text),int(xml.find('.//'+ns+'height').text))
+    return image
+
+
+def test_xmp_preview_uses_artwork_bounds_at_256px(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.ai';document(source)
+    convert(source,output,raster_fallback=False)
+    with pikepdf.open(output) as pdf:
+        image=xmp_preview(pdf)
+        assert image.size==(192,256)
+        assert pdf.pages[0].obj.Thumb.Height==52
+        # No white paper border around the solid spot artwork.
+        assert max(image.getpixel((0,0)))-min(image.getpixel((0,0)))>10
+
+
+def test_combined_xmp_preview_contains_both_artboards(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.ai'
+    pdf=pikepdf.new()
+    for color in (b'1 0 0',b'0 0 1'):
+        page=pdf.add_blank_page(page_size=(100,200))
+        page.Contents=pdf.make_stream(color+b' rg 0 0 100 200 re f')
+    pdf.save(source)
+    convert_document(source,output,raster_fallback=False)
+    with pikepdf.open(output) as pdf:
+        assert len(pdf.pages)==2
+        image=xmp_preview(pdf)
+        assert max(image.size)==256
+        pixels=[image.getpixel((x,y)) for y in range(image.height) for x in range(image.width)]
+        assert sum(r>200 and b<30 for r,g,b in pixels)>100
+        assert sum(b>200 and r<30 for r,g,b in pixels)>100
+
+
+def test_private_blocks_use_adobe_unfiltered_64k_storage(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.ai';document(source)
+    with pikepdf.open(source) as pdf:
+        drawing=read_drawing(pdf.pages[0],root=pdf.Root)
+        meta,private=make_private(drawing,'図形(確認)\\test')
+        # Valid PS comments large enough to require multiple compressed blocks.
+        rng=random.Random(42)
+        comments=b'\r'.join(b'%'+rng.randbytes(64).hex().encode() for _ in range(2000))+b'\r'
+        private=private.replace(b'%%EOF',comments+b'%%EOF')
+        save_ai(pdf,output,meta,private,drawings=[drawing])
+    with pikepdf.open(output) as pdf:
+        container=pdf.pages[0].obj.PieceInfo.Illustrator.Private
+        assert container.NumBlock>1
+        assert '/Filter' not in container.AIMetaData
+        assert '/Filter' not in pdf.Root.Metadata
+        for index in range(1,int(container.NumBlock)+1):
+            block=container[f'/AIPrivateData{index}']
+            assert '/Filter' not in block
+            assert len(block.read_raw_bytes())<=65536
+        assert read_private(pdf)==private
+        assert '図形'.encode() in private
+        assert b'\\050' in private and b'\\051' in private and b'\\134' in private
+        assert '/Filter' in pdf.pages[0].obj.Thumb
+
+
+def test_cmyk_pdf_defaults_keep_overprint_and_explicit_intent(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.ai';document(source)
+    with pikepdf.open(source,allow_overwriting_input=True) as pdf:
+        page=pdf.pages[0]
+        page.Resources.ExtGState=pikepdf.Dictionary(OP=pikepdf.Dictionary(op=True,OPM=1))
+        page.Contents=pdf.make_stream(b'/RelativeColorimetric ri /OP gs /S cs 1 scn 10 20 30 40 re f')
+        pdf.save(source)
+    convert(source,output,raster_fallback=False)
+    with pikepdf.open(output) as pdf:
+        page=pdf.pages[0]
+        assert '/Group' not in page.obj
+        intents=[str(args[0]) for args,op in pikepdf.parse_content_stream(page) if str(op)=='ri']
+        assert intents==['/Perceptual','/RelativeColorimetric']
+        assert page.Resources.ExtGState.OP.op
+        assert b'1 O\r' in read_private(pdf)

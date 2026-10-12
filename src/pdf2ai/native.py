@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import os
 import uuid
+import zlib
 from dataclasses import replace
 
 import pikepdf
@@ -32,9 +33,10 @@ def num(value: float) -> str:
 
 
 def ps_string(text: str) -> str:
-    # UTF-8 octal escapes preserve parentheses, backslashes, controls and names.
-    return "(" + "".join(chr(b) if 32 <= b < 127 and b not in (40,41,92)
-                         else f"\\{b:03o}" for b in text.encode("utf-8")) + ")"
+    # AI24 stores Unicode names as UTF-8, escaping only PS syntax and controls.
+    return "(" + "".join(char if ord(char) >= 32 and ord(char) != 127 and char not in '()\\'
+                         else ''.join(f"\\{b:03o}" for b in char.encode('utf-8'))
+                         for char in text) + ")"
 
 
 def color_command(color: Color, stroke: bool = False) -> str:
@@ -153,8 +155,9 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
         elif isinstance(item, Raster):
             process_inks.update(('Cyan', 'Magenta', 'Yellow', 'Black'))
     process_colors = ' '.join(name for name in ('Cyan', 'Magenta', 'Yellow', 'Black') if name in process_inks)
-    header = ["%!PS-Adobe-3.0", "%%Creator: Adobe Illustrator(R) 24.0",
+    header = ["%!PS-Adobe-3.0 ", "%%Creator: Adobe Illustrator(R) 24.0",
               "%%AI8_CreatorVersion: 24.0.0", f"%%Title: {ps_string(title)}",
+              '%%CreationDate: '+datetime.now(timezone.utc).strftime('%Y/%m/%d %H:%M'),
               "%%Canvassize: 16383", f"%%BoundingBox: {math.floor(bx0)} {math.floor(by0)} {math.ceil(bx1)} {math.ceil(by1)}",
               f"%%HiResBoundingBox: {artwork_box}", '%%DocumentProcessColors:'+(' '+process_colors if process_colors else ''),
               "%AI5_FileFormat 14.0", "%AI12_BuildNumber: 0", "%AI3_ColorUsage: Color",
@@ -169,15 +172,27 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
             header.append(("%%CMYKCustomColor: " if i == 0 else "%%+ ") +
                           " ".join(num(v) for v in spot.cmyk) + " " + ps_string(spot.name))
     header += ['%%CMYKProcessColor: 1 1 1 1 '+ps_string('[レジストレーション]'), "%%EndComments"]
+    # Adobe places plate declarations before the page/document settings.
+    settings = next(i for i,line in enumerate(header) if line.startswith('%AI3_Cropmarks:'))
+    plates = next(i for i,line in enumerate(header) if line.startswith(('%%DocumentCustomColors:', '%%CMYKProcessColor:')))
+    header = header[:settings] + header[plates:-1] + header[settings:plates] + header[-1:]
     gradients = list(dict.fromkeys(item.state.fill for item in drawing.paths
                                    if item.paint != 'stroke' and isinstance(item.state.fill, Gradient)))
     body = ["%%BeginProlog", "%%EndProlog", "%%BeginSetup",
+            '%AI5_Begin_NonPrinting', 'Np', '%AI9_BeginArtStyles', '/KnownStyle :',
+            ps_string('[デフォルト]')+' /Name ,', '/SimpleStyle :', '0 O', '0 0 0 0 k',
+            '0 R', '0 0 0 1 K', '0 1 0 0 0 Xy', '0 J 0 j 1 w 10 M []0 d',
+            '0 XR', '1 1 Xd', '/Paint ;', ' /Def ;', '%AI9_EndArtStyles', '%AI5_End_NonPrinting--',
             "%AI5_BeginPalette", "0 0 Pb", '1 1 1 1 '+ps_string('[レジストレーション]')+' 0 Xs',
             ps_string('[レジストレーション]'), 'Pc']
     for spot in drawing.spots:
         body += [color_command(Color('Spot',(1,),spot)),
                  ps_string(spot.name), "Pc"]
-    body += ["PB", "%AI5_EndPalette", f"{len(gradients)} Bn"]
+    body += ["PB", "%AI5_EndPalette",
+             '%AI5_Begin_NonPrinting', 'Np', '%AI9_BeginArtStyleList',
+             ps_string('[デフォルト]'), '%AI9_EndArtStyleList', '%AI5_End_NonPrinting--',
+             '%AI5_Begin_NonPrinting', 'Np', '%AI24_BeginSymbolList',
+             '%AI24_EndSymbolList', '%AI5_End_NonPrinting--', f"{len(gradients)} Bn"]
     for gradient in gradients:
         body += [f"%AI5_BeginGradient: {ps_string(gradient.name)}",
                  f"{ps_string(gradient.name)} {int(gradient.radial)} {len(gradient.stops)} Bd", "["]
@@ -279,7 +294,14 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
         body += [flags, f"{state.cap} J {state.join} j {num(width)} w {num(state.miter)} M",
                  "["+" ".join(num(v*item.stroke_scale) for v in state.dash)+"] "+num(state.phase*item.stroke_scale)+" d",
                  f"{int(item.even_odd)} XR"]
-        for path in item.paths:
+        # Illustrator reverses compound children when exporting its PDF view.
+        # Reverse the native solid-fill children so that the exported PDF keeps
+        # the input's subpath order and the same decimal-rounding origin.
+        # Coordinates, winding, and the Drawing itself remain untouched.
+        paths = (reversed(item.paths) if item.paint == 'fill' and len(item.paths)>1
+                 and isinstance(state.fill,Color) and state.fill_alpha == 1
+                 and state.blend_mode == 'Normal' else item.paths)
+        for path in paths:
             body.append(f"{max(0,len(path_commands(path))-1)} As")
             for op,coords in path_commands(path):
                 body.append(" ".join(num(v) for v in coords)+" "+op)
@@ -394,7 +416,7 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
     return drawing_report(drawing, source, output, index, conversion_mode, fallback_reason, raster_dpi, outline_text, private_blocks)
 
 
-def save_ai(pdf, output, meta, private, *, overwrite=False, drawings=None):
+def save_ai(pdf, output, meta, private, *, overwrite=False, drawings=None, artboard_boxes=None):
     """Attach one shared editing stream to every PDF page and publish atomically."""
     page = pdf.pages[0]
     compressed = MARKER+compress(private)
@@ -429,11 +451,18 @@ def save_ai(pdf, output, meta, private, *, overwrite=False, drawings=None):
         metadata["pdf:Producer"] = AI_PRODUCER
         for key in ("pdfxid:GTS_PDFXVersion", "pdfx:GTS_PDFXVersion", "pdfx:GTS_PDFXConformance"):
             if key in metadata: del metadata[key]
-    set_structured_metadata(pdf, drawings, meta)
+    set_structured_metadata(pdf, drawings, meta, artboard_boxes=artboard_boxes)
+    # Adobe leaves its Zstandard blocks and AIMetaData unfiltered. Applying
+    # Flate to already compressed blocks adds a second, unnecessary wrapper.
+    unfiltered = {dictionary.AIMetaData.objgen, pdf.Root.Metadata.objgen}
+    unfiltered.update(dictionary[f'/AIPrivateData{i}'].objgen for i in range(1,len(chunks)+1))
+    for obj in pdf.objects:
+        if isinstance(obj,pikepdf.Stream) and '/Filter' not in obj and obj.objgen not in unfiltered:
+            obj.write(zlib.compress(obj.read_bytes()), filter=pikepdf.Name.FlateDecode)
     fd,temporary = tempfile.mkstemp(prefix=".pdf2ai-",suffix=".ai",dir=output.parent)
     os.close(fd)
     try:
-        pdf.save(temporary, min_version="1.6", compress_streams=True)
+        pdf.save(temporary, min_version="1.6", compress_streams=False)
         with pikepdf.open(temporary) as check:
             if read_private(check) != private: raise ConversionError("Private-stream verification failed")
         # Hard-link publication fails atomically if an output appeared during

@@ -245,7 +245,7 @@ def _assemble_document(pdf, source, output, selected, labels, normalized_dic, no
         del pdf.pages[0]
     for page, drawing in zip(pdf.pages, drawings):
         align_page_settings(page, drawing)
-    blocks = save_ai(pdf, output, meta, private, overwrite=overwrite, drawings=drawings)
+    blocks = save_ai(pdf, output, meta, private, overwrite=overwrite, drawings=drawings, artboard_boxes=boxes)
     for report, box in zip(reports, boxes):
         report.update(private_blocks=blocks, artboard_box=list(box))
     return reports

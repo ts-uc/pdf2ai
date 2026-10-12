@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from io import BytesIO
 import pikepdf
 import pytest
 import fitz
@@ -27,7 +28,11 @@ def test_transform_compound_and_preview(tmp_path):
         assert b'*u\r' in private and b'*U\r' in private
         info=pdf.pages[0].obj.PieceInfo.Illustrator.Private
         assert info.RoundtripVersion==24 and info.CreatorVersion==24
-    with fitz.open(source) as a,fitz.open(output) as b:
+    # Match Illustrator's default CMYK rendering intent when checking geometry.
+    with pikepdf.open(source) as expected:
+        expected.pages[0].contents_add(b'/Perceptual ri\n',prepend=True)
+        buffer=BytesIO();expected.save(buffer)
+    with fitz.open(stream=buffer.getvalue(),filetype='pdf') as a,fitz.open(output) as b:
         assert a[0].get_pixmap().samples==b[0].get_pixmap().samples
 
 

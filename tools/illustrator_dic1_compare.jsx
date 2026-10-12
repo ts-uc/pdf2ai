@@ -29,12 +29,13 @@
         }
         return result;
     }
-    var names = ['dic1_exported.ai','dic1_fromai.ai'], results = [];
+    var names = ['dic1_exported.ai','dic1_fromai.ai'], results = [], summaryOnly = false;
     var request = new File(root + '/output/dic1-comparison-request.json');
     if (request.exists) {
         request.encoding = 'UTF-8'; request.open('r');
         var config = eval('(' + request.read() + ')'); request.close();
         names = config.files;
+        summaryOnly = !!config.summaryOnly;
     }
     var previous = app.userInteractionLevel;
     try {
@@ -47,12 +48,13 @@
                     images:doc.rasterItems.length,text:doc.textFrames.length,
                     placedItems:doc.placedItems.length,groups:doc.groupItems.length,
                     compoundPaths:doc.compoundPathItems.length};
+                result.pathCount = doc.pathItems.length;
                 for (var a = 0; a < doc.artboards.length; a++) result.artboards.push({
                     name:doc.artboards[a].name,rect:array(doc.artboards[a].artboardRect)});
                 for (var l = 0; l < doc.layers.length; l++) result.layers.push({
                     name:doc.layers[l].name,visible:doc.layers[l].visible,
                     locked:doc.layers[l].locked,printable:doc.layers[l].printable});
-                for (var p = 0; p < doc.pathItems.length; p++) {
+                for (var p = 0; !summaryOnly && p < doc.pathItems.length; p++) {
                     var path = doc.pathItems[p], points = [];
                     for (var n = 0; n < path.pathPoints.length; n++) {
                         var point = path.pathPoints[n];
