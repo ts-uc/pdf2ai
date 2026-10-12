@@ -83,3 +83,5 @@ For a multipage PDF, add `--page 2` to convert page 2. See [the detailed guide](
 複数ページの PDF は、`--page 2` を追加すると 2 ページ目を変換できます。その他の使い方・対応機能・困ったときの設定は[詳細ガイド](docs/technical.md)を参照してください。
 
 全ページをページ別に保存する場合は`--pages all`、1つのAIにまとめる場合は`--combine`を指定します。`--pages 1,3-5`で範囲を選択できます。`--check`はAIを作らず全ページのベクター対応可否を検査します。追加機能・検証結果と未完了事項は[課題への対応状況](docs/issue-resolution-progress.md)を参照してください。
+
+CLIはすべての変換が成功してからAIとJSONを一括保存します。`--check --combine`で結合条件も事前検査できます。`--ask-password`または`--password-file`で暗号化PDF、`--flatten-annotations`で注釈の外観取り込み、`--timeout 秒`で変換時間を制限できます。[今回の対応範囲と検証結果](docs/medium-difficulty-improvements.md)を参照してください。

@@ -15,6 +15,7 @@ from fontTools.pens.boundsPen import BoundsPen
 
 from .codec import MARKER, compress, decode_private
 from .path_conflicts import paths_conflict
+from .input_preparation import prepare_input
 from .document_defaults import (fill_artwork_bounds, align_page_settings, add_page_thumbnails,
                                 set_document_metadata, set_structured_metadata)
 from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, GroupBoundary, BLEND_MODES, STROKE_CURVE_FLATNESS, read_drawing
@@ -321,6 +322,7 @@ def read_private(pdf) -> bytes | None:
     return None
 
 
+@prepare_input
 def convert(source: Path | str, output: Path | str, *, page_number: int | None = None,
             overwrite: bool = False, outline_text: bool = False, ghostscript: str | None = None, raster_fallback: bool = True, raster_dpi: float = 300) -> dict:
     source,output = Path(source),Path(output)
@@ -343,6 +345,10 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
         page = pdf.pages[index]
         from .dic import normalize_pdf_spots
         normalized_dic = normalize_pdf_spots(page)
+        from .toyo import normalize_pdf_spots as normalize_toyo
+        normalized_toyo = normalize_toyo(page)
+        from .image_resources import normalize_image_spaces
+        normalized_images = normalize_image_spaces(page,pdf)
         fallback_reason = None
         conversion_mode = 'vector'
         try:
@@ -365,7 +371,7 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
             if not raster_fallback: raise
             from .rasterize import render_drawing
             fallback_reason = str(exc)
-            if normalized_dic:
+            if normalized_dic or normalized_toyo or normalized_images:
                 with tempfile.TemporaryDirectory(prefix='pdf2ai-dic-', dir=output.parent) as directory:
                     normalized = Path(directory)/'normalized.pdf'
                     pdf.save(normalized)
@@ -376,6 +382,8 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
             meta,private = make_private(drawing, source.name)
         if normalized_dic:
             drawing.color_conversions.append('DIC spot alternate colors normalized to legacy CMYK book: '+', '.join(normalized_dic))
+        if normalized_toyo:
+            drawing.color_conversions.append('TOYO spot alternate colors normalized to independent Lab book: '+', '.join(normalized_toyo))
         # Remove pages in reverse order so page dictionaries/resources remain owned
         # by this PDF, including OutputIntents and embedded color profiles.
         for i in range(len(pdf.pages)-1,-1,-1):
@@ -406,6 +414,12 @@ def save_ai(pdf, output, meta, private, *, overwrite=False, drawings=None):
     pdf.docinfo["/Creator"] = AI_CREATOR
     pdf.docinfo["/Producer"] = AI_PRODUCER
     set_document_metadata(pdf, output, moment, drawings)
+    if drawings is not None:
+        from .pdf_groups import explicit_page_knockout
+        for page,drawing in zip(pdf.pages,drawings):
+            # Apply only to supported native page groups, never to fallback data.
+            if drawing.items and isinstance(drawing.items[0],GroupBoundary) and drawing.items[0].knockout:
+                explicit_page_knockout(pdf,page)
     add_page_thumbnails(pdf)
     # Do not claim PDF/X certification for a newly written file without preflight.
     for key in ("/GTS_PDFXVersion", "/GTS_PDFXConformance"):

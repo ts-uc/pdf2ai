@@ -107,11 +107,11 @@ def test_nonlinear_gradient_as_editable_stops(tmp_path):
 def test_automatic_fallback_retains_pdf_and_declares_losses(tmp_path):
     source=tmp_path/'fallback.pdf';output=tmp_path/'fallback.ai';feature_pdf(source)
     with pikepdf.open(source,allow_overwriting_input=True) as p:
-        p.pages[0].obj.Group.K=True;p.save(source)
+        p.pages[0].Contents=pikepdf.Array([p.pages[0].Contents,p.make_stream(b'q 0 w 10 10 m 50 50 l S Q')]);p.save(source)
     result=convert(source,output,raster_dpi=144)
     assert result['rasterized'] and result['conversion_mode']=='raster-fallback'
     assert result['images']==1 and result['raster_dpi']==144 and result['lost_features']
-    assert 'nonknockout' in result['fallback_reason']
+    assert 'hairline' in result['fallback_reason']
     with pikepdf.open(output) as p:
         body=read_private(p);assert b'XI\n' in body
         assert p.pages[0].obj.PieceInfo.Illustrator.Private.CreatorVersion==24
@@ -132,6 +132,6 @@ def test_bad_dpi_never_creates_output(tmp_path,dpi):
 def test_fallback_memory_limit(tmp_path):
     source=tmp_path/'a.pdf';output=tmp_path/'a.ai';feature_pdf(source)
     with pikepdf.open(source,allow_overwriting_input=True) as p:
-        p.pages[0].obj.Group.K=True;p.save(source)
+        p.pages[0].Contents=pikepdf.Array([p.pages[0].Contents,p.make_stream(b'q 0 w 10 10 m 50 50 l S Q')]);p.save(source)
     with pytest.raises(ConversionError,match='million pixels'):convert(source,output,raster_dpi=1200)
     assert not output.exists()

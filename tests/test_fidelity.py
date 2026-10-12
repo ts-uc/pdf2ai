@@ -194,11 +194,11 @@ def test_nonuniform_straight_strokes_preserve_edges_and_state(tmp_path,matrix,ca
 
 
 @pytest.mark.parametrize('path',['0 0 m 30 0 l h S','[0 3] 0 d 0 0 m 30 0 l S'])
-def test_complex_nonuniform_strokes_still_rejected(path):
+def test_previously_rejected_nonuniform_strokes_now_supported(path):
     from pdf2ai.vector import ConversionError
     pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
     page.Contents=pdf.make_stream(('2 0 0 1 0 0 cm '+path).encode())
-    with pytest.raises(ConversionError):read_drawing(page)
+    assert read_drawing(page).outlined_strokes == 1
 
 
 @pytest.mark.parametrize('dash,phase,intervals',[

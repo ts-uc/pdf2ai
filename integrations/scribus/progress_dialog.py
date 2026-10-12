@@ -28,11 +28,14 @@ def build_preflight_dialog(summary):
     for item in summary['results']:
         lines.append(f"ページ{item['page']}："+('ベクター変換可能' if item['native_supported'] else '画像化が必要：'+item['first_blocker']))
         lines.extend('  '+warning for warning in item.get('warnings',[]))
-    lines.append('各ページの最初の未対応理由を表示します。結合の配置・色空間制約は変換時に検査します。')
+    lines.extend('結合できません：'+reason for reason in dict.fromkeys(
+        item['combined_blocker'] for item in summary['results'] if item.get('combined_blocker')))
+    lines.append('各ページの最初の未対応理由を表示します。'+
+        ('結合の配置・色空間・特色定義も検査済みです。' if summary.get('combined_constraints_checked') else ''))
     details.setPlainText('\n'.join(lines))
     layout.addWidget(details)
     if not summary['can_export']:
-        layout.addWidget(QLabel('画像化禁止が有効のため書き出せません。設定を変更して再実行してください。',wordWrap=True))
+        layout.addWidget(QLabel('検査で書き出しを妨げる条件が見つかりました。上の詳細を確認してください。',wordWrap=True))
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
     buttons.button(QDialogButtonBox.StandardButton.Ok).setText('書き出し')
     buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(summary['can_export'])

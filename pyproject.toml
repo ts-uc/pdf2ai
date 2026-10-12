@@ -7,11 +7,11 @@ name = "pdf2ai-vector"
 version = "0.1.0"
 description = "PDF vector to experimental Illustrator 2020 native conversion with spot colors"
 requires-python = ">=3.10"
-dependencies = ["pikepdf>=9,<11", "PyMuPDF>=1.24,<2", "Pillow>=10", "fonttools>=4.50,<5", "zstandard>=0.23; python_version < '3.14'"]
+dependencies = ["pikepdf>=9,<11", "PyMuPDF>=1.24.3,<2", "Pillow>=10", "fonttools>=4.50,<5", "zstandard>=0.23; python_version < '3.14'"]
 
 [project.optional-dependencies]
 scribus = ["PySide6-Essentials>=6.6,<7"]
-test = ["pytest>=8,<10", "PyMuPDF>=1.24"]
+test = ["pytest>=8,<10", "PyMuPDF>=1.24.3"]
 
 [project.scripts]
 pdf2ai = "pdf2ai.cli:main"

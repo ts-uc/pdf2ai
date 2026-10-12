@@ -72,8 +72,8 @@ def test_stroke_scale_and_nonuniform_rejection(tmp_path):
         body=read_private(pdf)
         assert b'6 w' in body and b'[8 4] 2 d' in body and b'20 20 L' in body
     before=out.read_bytes()
-    make_pdf(source,b'q 2 0 0 1 0 0 cm 0 0 m 10 10 l 0 0 l S Q')
-    with pytest.raises(ConversionError,match='nonuniform'):convert(source,out,overwrite=True,raster_fallback=False)
+    make_pdf(source,b'q 0 0 0 1 0 0 cm 0 0 m 10 10 l S Q')
+    with pytest.raises(ConversionError,match='Singular'):convert(source,out,overwrite=True,raster_fallback=False)
     assert out.read_bytes()==before
 
 
@@ -83,7 +83,7 @@ def test_unified_samples(tmp_path,kind,page):
     source=SAMPLES/('conversion_'+kind+'.pdf')
     out=tmp_path/(kind+str(page)+'.ai')
     result=convert(source,out,page_number=page,raster_dpi=144)
-    assert result['rasterized']==(kind=='fallback')
+    assert result['rasterized']==(kind=='fallback' and page!=3)
     if kind=='native':
         assert result['gradients']==10 and result['images']==17 and len(result['spots'])==4
         assert result['outlined_glyphs']>1000
@@ -212,7 +212,7 @@ def test_illustrator_creator_and_producer_metadata(tmp_path,rasterized):
         pdf.docinfo['/Title']='Artwork'
         pdf.docinfo['/Author']='Designer'
         if rasterized:
-            pdf.pages[0].Group=pikepdf.Dictionary(S=pikepdf.Name.Transparency,K=True,CS=pikepdf.Name.DeviceCMYK)
+            pdf.pages[0].Contents=pdf.make_stream(b'0 w 10 10 m 50 50 l S')
         with pdf.open_metadata(set_pikepdf_as_editor=False,update_docinfo=False) as metadata:
             metadata['xmp:CreatorTool']='Scribus'
             metadata['pdf:Producer']='Original PDF writer'

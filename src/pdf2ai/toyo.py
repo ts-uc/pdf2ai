@@ -36,3 +36,44 @@ def toyo_name(name):
 
 def toyo_color(name):
     return _colors().get(toyo_name(name))
+
+
+def normalize_pdf_spots(page):
+    """Align registered CMYK TOYO alternates with the editable Lab book color.
+
+    Existing valid Lab values are retained. DIC is deliberately not handled here.
+    """
+    import pikepdf
+    from .vector import ConversionError, read_spot
+    seen, changed = set(), set()
+    pending = [page.obj.get('/Resources')]
+    while pending:
+        resources = pending.pop()
+        if not isinstance(resources,pikepdf.Dictionary): continue
+        if resources.objgen != (0,0):
+            if resources.objgen in seen: continue
+            seen.add(resources.objgen)
+        spaces = resources.get('/ColorSpace',{})
+        if not isinstance(spaces,(dict,pikepdf.Dictionary)): spaces = {}
+        for space in spaces.values():
+            if not isinstance(space,pikepdf.Array) or len(space)!=4 or str(space[0])!='/Separation': continue
+            if toyo_color(str(space[1])[1:]) is None: continue
+            try:
+                spot = read_spot(space)
+            except (ConversionError,pikepdf.PdfError,NotImplementedError,ValueError,TypeError,IndexError,AttributeError):
+                continue
+            if str(space[2]) != '/DeviceCMYK': continue
+            space[1] = pikepdf.Name('/'+spot.name)
+            space[2] = pikepdf.Array([pikepdf.Name.Lab,pikepdf.Dictionary(
+                WhitePoint=[.964203,1,.824905],Range=[-128,127,-128,127])])
+            space[3] = pikepdf.Dictionary(FunctionType=2,Domain=[0,1],
+                C0=[100,0,0],C1=list(spot.lab),N=1)
+            changed.add(spot.name)
+        objects = resources.get('/XObject',{})
+        if not isinstance(objects,(dict,pikepdf.Dictionary)): continue
+        for obj in objects.values():
+            if isinstance(obj,pikepdf.Stream) and str(obj.get('/Subtype'))=='/Form':
+                if obj.objgen in seen: continue
+                seen.add(obj.objgen)
+                pending.append(obj.get('/Resources'))
+    return sorted(changed)

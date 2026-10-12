@@ -5,9 +5,11 @@ import pikepdf
 
 from .native import drawing_report, make_private
 from .vector import ConversionError, read_drawing
+from .input_preparation import prepare_input
 
 
-def inspect_document(source, pages=None, raster_dpi=300):
+@prepare_input
+def inspect_document(source, pages=None, raster_dpi=300, *, progress=None):
     if not math.isfinite(raster_dpi) or not 72 <= raster_dpi <= 1200:
         raise ConversionError('Raster DPI must be between 72 and 1200')
     source = Path(source)
@@ -18,7 +20,7 @@ def inspect_document(source, pages=None, raster_dpi=300):
         selected = list(pages) if pages is not None else list(range(1, len(pdf.pages)+1))
         if not selected or any(type(p) is not int or not 1 <= p <= len(pdf.pages) for p in selected) or len(set(selected)) != len(selected):
             raise ConversionError('Invalid page selection')
-        for number in selected:
+        for index, number in enumerate(selected):
             try:
                 drawing = read_drawing(pdf.pages[number-1], root=pdf.Root)
                 make_private(drawing, source.name)
@@ -32,4 +34,22 @@ def inspect_document(source, pages=None, raster_dpi=300):
             result['inspection_only'] = True
             result['all_blockers_enumerated'] = False
             results.append(result)
+            if progress is not None: progress(number,index+1,len(selected))
     return results
+
+
+@prepare_input
+def inspect_combination(source, pages=None, raster_dpi=300, *, raster_fallback=True,
+                        page_labels=None, progress=None):
+    """Validate packing, final color model and serialization without publishing AI."""
+    from .multiboard import convert_document
+    try:
+        return convert_document(source, None, pages=pages, page_labels=page_labels,
+            raster_dpi=raster_dpi, raster_fallback=raster_fallback,
+            progress=progress, inspection_only=True)
+    except ConversionError as error:
+        results = inspect_document(source, pages, raster_dpi)
+        for index, item in enumerate(results):
+            if page_labels is not None: item['page'] = page_labels[index]
+            item.update(combined_constraints_checked=True, combined_blocker=str(error))
+        return results

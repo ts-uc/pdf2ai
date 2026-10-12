@@ -5,6 +5,10 @@
     var config = eval('(' + control.read() + ')'); control.close();
     if (config.run != 'before' && config.run != 'after') throw new Error('Invalid run');
     var folder = new Folder(base + '/' + config.run);
+    if (config.subfolder) {
+        if (!/^[A-Za-z0-9_-]+$/.test(config.subfolder)) throw new Error('Invalid subfolder');
+        folder = new Folder(folder + '/' + config.subfolder);
+    }
     var out = new Folder(folder + '/illustrator'); if (!out.exists) out.create();
     var files = folder.getFiles('*.ai'), rows = ['Illustrator\t' + app.version];
     if (config.cases) {

@@ -253,8 +253,8 @@
     {
       "page": 3,
       "title": "Nonuniform reversing stroke transform",
-      "reason_contains": "nonuniform",
-      "expected_mode": "raster-fallback"
+      "reason_contains": null,
+      "expected_mode": "vector"
     },
     {
       "page": 4,

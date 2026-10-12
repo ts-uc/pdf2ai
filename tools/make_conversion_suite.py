@@ -289,15 +289,15 @@ def build_pages(path):
 
 def build_fallback(path,temporary):
     result=pikepdf.new();records=[];groups=[];off=[];locked=[]
-    def add(title,pdf,reason):
-        label(pdf,title,'RASTER FALLBACK expected / RGB image; no editable paths, spot separation or layers')
+    def add(title,pdf,reason,mode='raster-fallback'):
+        label(pdf,title,'RASTER FALLBACK expected / RGB image; no editable paths, spot separation or layers' if mode=='raster-fallback' else 'VECTOR expected / reversing stroke outlined')
         result.pages.extend(pdf.pages);add_groups(result,pdf,groups,off,locked)
-        records.append({'page':len(records)+1,'title':title,'reason_contains':reason,'expected_mode':'raster-fallback'})
+        records.append({'page':len(records)+1,'title':title,'reason_contains':reason,'expected_mode':mode})
     pdf=document('0.8 0 0 rg 30 50 150 100 re f 0 0.6 0 rg 120 80 150 100 re f',size=A4)
     pdf.pages[0].obj.Group=pikepdf.Dictionary(S=pikepdf.Name.Transparency,CS=pikepdf.Name.DeviceRGB,K=True)
     add('Knockout transparency group',pdf,'nonknockout')
     add('Hairline stroke',document('0 w 30 50 m 350 160 l S',size=A4),'hairline')
-    add('Nonuniform reversing stroke transform',document('q 2 0 0 1 30 50 cm 4 w 0 0 m 150 100 l 0 0 l S Q',size=A4),'nonuniform')
+    add('Nonuniform reversing stroke transform',document('q 2 0 0 1 30 50 cm 4 w 0 0 m 150 100 l 0 0 l S Q',size=A4),None,mode='vector')
     lab=pikepdf.Array([pikepdf.Name.Lab,pikepdf.Dictionary(WhitePoint=[0.9505,1,1.089])])
     add('Lab color space',document('/L cs 65 30 20 scn 30 50 300 120 re f',pikepdf.Dictionary(ColorSpace=pikepdf.Dictionary(L=lab)),size=A4),'Color components')
     pdf=document('0 0.5 1 rg 30 50 300 120 re f',size=A4)
@@ -338,7 +338,7 @@ def main():
                 for i in range(len(original)):
                     dest=output/f'{name}-{i+1:02}.ai'
                     report=convert(source,dest,page_number=i+1,overwrite=True,raster_dpi=144)
-                    expected='raster-fallback' if name=='fallback' else 'vector'
+                    expected=manifest[name][i]['expected_mode'] if name=='fallback' else 'vector'
                     if report['conversion_mode']!=expected:raise AssertionError(f'{name} page {i+1}: {report}')
                     if name=='native':
                         if report['gradients']!=10 or report['images']!=17 or len(report['spots'])!=4 or report['outlined_glyphs']<1000:
@@ -352,7 +352,7 @@ def main():
                         box=report['page_box'];size=(box[2]-box[0],box[3]-box[1])
                         if size!=((1150,1620) if i in (0,2) else (1620,1150)):
                             raise AssertionError(f'Wrong rotated/UserUnit artboard: {size}')
-                    if name=='fallback':
+                    if name=='fallback' and report['rasterized']:
                         reason=manifest[name][i]['reason_contains']
                         if reason.lower() not in report['fallback_reason'].lower():raise AssertionError(f'Unexpected fallback reason: {report}')
                         try:convert(source,output/f'strict-{i+1}.ai',page_number=i+1,raster_fallback=False)

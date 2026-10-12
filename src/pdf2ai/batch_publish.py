@@ -1,10 +1,24 @@
 """Publish staged files together; restore previous files on ordinary failures."""
 import json
+import errno
 import os
 from pathlib import Path
 import shutil
 import tempfile
 from .path_conflicts import duplicate_destinations
+
+
+def restore_backup(backup,destination):
+    try:
+        os.replace(backup,destination)
+    except OSError as error:
+        if error.errno!=errno.EXDEV:raise
+        # A CLI batch may publish to several filesystems. Restore through a
+        # sibling file, retaining the original backup until replacement succeeds.
+        with tempfile.TemporaryDirectory(prefix='.pdf2ai-restore-',dir=destination.parent) as directory:
+            staged=Path(directory)/'backup'
+            shutil.copy2(backup,staged,follow_symlinks=False)
+            os.replace(staged,destination)
 
 
 def publish_batch(files, *, overwrite=False):
@@ -38,7 +52,7 @@ def publish_batch(files, *, overwrite=False):
         for destination,backup in reversed(published):
             try:
                 if backup is None:destination.unlink()
-                else:os.replace(backup,destination)
+                else:restore_backup(backup,destination)
             except OSError as error:failures.append(f'{destination}: {error}')
         if failures:
             retain_recovery = True

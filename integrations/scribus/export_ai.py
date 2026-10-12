@@ -223,6 +223,44 @@ def export_pdf(scribus, path, pages, options=None):
         raise RuntimeError('ScribusのPDF書き出しが完了しませんでした。')
 
 
+def export_pdf_monitored(scribus,path,pages,options,python):
+    """Accept cancellation during synchronous save; stop before any AI conversion."""
+    import time
+    directory=Path(path).parent
+    control={name:str(directory/('pdf-progress-'+name)) for name in ('ready','cancel','done')}
+    control['timeout_minutes']=options.get('timeout_minutes',0)
+    request=directory/'pdf-progress.json'
+    request.write_text(json.dumps(control),encoding='utf-8')
+    launch={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
+    process=subprocess.Popen([python,str(Path(__file__).resolve()),'--pdf-progress',str(request)],
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=child_environment(),**launch)
+    started=time.monotonic()
+    status=None
+    try:
+        while not Path(control['ready']).exists():
+            if process.poll() is not None or time.monotonic()-started>15:
+                raise RuntimeError('PDF作成の進捗画面を開始できませんでした。')
+            time.sleep(.02)
+        if not Path(control['cancel']).exists():export_pdf(scribus,path,pages,options)
+        if process.poll() is not None:
+            raise RuntimeError('PDF作成の進捗画面が終了しました。AI変換は開始していません。')
+        timeout=float(control['timeout_minutes'])*60
+        timed_out=bool(timeout and time.monotonic()-started>=timeout)
+        cancel=Path(control['cancel'])
+        if cancel.exists():timed_out=timed_out or cancel.read_text(encoding='utf-8')=='timeout'
+        status={'cancelled':cancel.exists() or timed_out,'timed_out':timed_out}
+    finally:
+        Path(control['done']).touch()
+        try:process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill();process.communicate()
+        # Include a click received between PDF completion and closing the UI.
+        cancel=Path(control['cancel'])
+        if status is not None and cancel.exists():
+            status.update(cancelled=True,timed_out=status['timed_out'] or cancel.read_text(encoding='utf-8')=='timeout')
+    return status
+
+
 def prepare_request(request):
     sys.path.insert(0, str(ROOT / 'src'))
     import pikepdf
@@ -254,18 +292,23 @@ def prepare_request(request):
 
 def inspect_export(request, emit=lambda event: None):
     source,pages,dpi,mode,outputs,report_path = prepare_request(request)
-    from pdf2ai.preflight import inspect_document
+    from pdf2ai.preflight import inspect_document, inspect_combination
     results = []
-    for index,page in enumerate(pages,1):
-        emit({'phase':'inspect','current':index-1,'total':len(pages),'page':page})
-        item = inspect_document(source,pages=[index],raster_dpi=dpi)[0]
-        item['page'] = page
-        results.append(item)
+    if mode == 'combined':
+        results = inspect_combination(source, list(range(1,len(pages)+1)), dpi,
+            page_labels=pages, raster_fallback=not request.get('strict',STRICT),
+            progress=lambda page,done,total: emit({'phase':'inspect','current':done,'total':total,'page':page}))
+    else:
+        emit({'phase':'inspect','current':0,'total':len(pages)})
+        results = inspect_document(source,raster_dpi=dpi,
+            progress=lambda number,done,total: emit({'phase':'inspect','current':done,'total':total,'page':pages[number-1]}))
+        for item,page in zip(results,pages):item['page'] = page
     emit({'phase':'inspect','current':len(pages),'total':len(pages)})
     return {'inspection_only':True,'results':results,
             'strict':bool(request.get('strict',STRICT)),
-            'can_export':not request.get('strict',STRICT) or all(r['native_supported'] for r in results),
-            'combined_constraints_checked':False}
+            'can_export':not any(r.get('combined_blocker') for r in results) and
+                (not request.get('strict',STRICT) or all(r['native_supported'] for r in results)),
+            'combined_constraints_checked':mode == 'combined'}
 
 
 def wait_for_publication(request, emit, total):
@@ -367,7 +410,10 @@ def scribus_main(scribus):
         with tempfile.TemporaryDirectory(prefix='.pdf2ai-scribus-', dir=outputs[0].parent) as directory:
             directory = Path(directory)
             pdf = directory / 'document.pdf'
-            export_pdf(scribus, pdf, pages, options)
+            pdf_status=export_pdf_monitored(scribus,pdf,pages,options,python)
+            if pdf_status['cancelled']:
+                scribus.messageBox('AI書き出し','PDF作成が制限時間を超えたため中止しました。AIは保存していません。' if pdf_status['timed_out'] else 'PDF作成後に中止しました。AIは保存していません。',scribus.ICON_INFORMATION)
+                return
             request = {'pdf': str(pdf), 'pages': pages, 'output': str(Path(chosen)),
                        'overwrite': overwrite, 'strict': options.get('strict', STRICT),
                        'dpi': options.get('dpi', RASTER_DPI), 'document': document.name,
@@ -406,12 +452,13 @@ def scribus_main(scribus):
 
 
 def main():
-    if any(flag in sys.argv for flag in ('--check', '--worker', '--dialog','--inspect','--export-session')):
+    if any(flag in sys.argv for flag in ('--check', '--worker', '--dialog','--inspect','--export-session','--pdf-progress')):
         parser = argparse.ArgumentParser()
         parser.add_argument('--check', action='store_true')
         parser.add_argument('--worker', type=Path)
         parser.add_argument('--inspect',type=Path)
         parser.add_argument('--export-session',type=Path)
+        parser.add_argument('--pdf-progress',type=Path)
         parser.add_argument('--events',action='store_true')
         parser.add_argument('--dialog', action='store_true')
         parser.add_argument('--document', default='')
@@ -424,6 +471,10 @@ def main():
             if args.check:
                 from PySide6 import QtWidgets
                 print('pdf2ai ready')
+                return 0
+            if args.pdf_progress:
+                from pdf_progress import run
+                run(args.pdf_progress)
                 return 0
             if args.dialog:
                 print(json.dumps(export_dialog(args.document, args.count, args.current), ensure_ascii=False))

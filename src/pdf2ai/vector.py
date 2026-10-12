@@ -23,9 +23,22 @@ RENDERING_INTENTS = {'/Perceptual':0,'/RelativeColorimetric':1,'/Saturation':2,'
 
 def content_instructions(container, resources, ancestors=()):
     """Expand Form invocations with explicit state/resource scope boundaries."""
-    for instruction in pikepdf.parse_content_stream(container):
-        if not hasattr(instruction, 'operator'):
-            raise ConversionError("Inline images are unsupported")
+    instructions = list(pikepdf.parse_content_stream(container))
+    if any(not hasattr(instruction, 'operator') or str(instruction.operator)=='INLINE IMAGE'
+           for instruction in instructions):
+        # Externalize only the current, actually invoked stream. A recursive
+        # whole-resource walk would also visit unused and cyclic Forms.
+        owner = container.obj if isinstance(container, pikepdf.Page) else container
+        contents = owner.get('/Contents') if isinstance(container, pikepdf.Page) else container
+        carrier = pikepdf.Dictionary(Type=pikepdf.Name.Page, MediaBox=[0,0,1,1],
+            Resources=pikepdf.Dictionary(resources), Contents=contents).with_same_owner_as(owner)
+        temporary_page = pikepdf.Page(carrier)
+        temporary_page.externalize_inline_images(min_size=0, shallow=True)
+        resources = temporary_page.Resources
+        instructions = list(pikepdf.parse_content_stream(temporary_page))
+    for instruction in instructions:
+        if not hasattr(instruction, 'operator') or str(instruction.operator)=='INLINE IMAGE':
+            raise ConversionError('Unable to decode inline image')
         op,args = str(instruction.operator), list(instruction.operands)
         optional = None
         if op == 'Do':
@@ -118,6 +131,7 @@ class State:
     text_rise: float = 0
     text_render_mode: int = 0
     rendering_intent: int = 1
+    stroke_adjust: bool = False
 
 
 @dataclass
@@ -212,7 +226,8 @@ def flatten_stroke_path(path,state):
         elif op=='L':commands.append((op,coords));current=coords
         elif op=='C' and current is not None:
             p1,p2,p3=coords[:2],coords[2:4],coords[4:6]
-            if current==p1==p2==p3:continue
+            if current==p1==p2==p3:
+                commands.append(('L',p3));continue
             flatten(current,p1,p2,p3);current=p3
         else:raise ConversionError('Unsupported stroke curve command')
     return Subpath(commands,path.closed)
@@ -303,7 +318,20 @@ def outline_dashed_polyline(pts,closed,state):
         path=Subpath([('m' if i==0 else 'L',point(state.matrix,*v)) for i,v in enumerate(fragment)],whole)
         result.extend(outline_polyline_stroke(path,solid))
         if len(result)>60000:raise ConversionError('Outlined dash pattern exceeds complexity limit')
-    result.extend(stroke_circle(center,state.width/2,state.matrix) for center in dots)
+    if state.cap == 1:
+        result.extend(stroke_circle(center,state.width/2,state.matrix) for center in dots)
+    elif state.cap == 2:
+        for distance, end in intervals:
+            if distance != end: continue
+            i = min(bisect_right(lengths,distance)-1,len(vertices)-2)
+            first,last = vertices[i:i+2]
+            length = math.dist(first,last)
+            t = ((last[0]-first[0])/length,(last[1]-first[1])/length)
+            center = location(distance); r = state.width/2
+            corners = [(center[0]+r*(x*t[0]-y*t[1]),center[1]+r*(x*t[1]+y*t[0]))
+                       for x,y in ((-1,1),(1,1),(1,-1),(-1,-1))]
+            result.append(Subpath([('m' if j==0 else 'L',point(state.matrix,*v))
+                                   for j,v in enumerate(corners)],True))
     if len(result)>60000:raise ConversionError('Outlined dash pattern exceeds complexity limit')
     return result
 
@@ -317,7 +345,8 @@ def outline_polyline_stroke(path,state):
     pts=[((d*(x-e)-c*(y-f))/det,(-b*(x-e)+a*(y-f))/det) for _,(x,y) in path.commands]
     pts=[v for i,v in enumerate(pts) if i==0 or v!=pts[i-1]]
     if path.closed and len(pts)>1 and pts[-1]==pts[0]:pts.pop()
-    if len(pts)<2:raise ConversionError('Degenerate nonuniform polyline')
+    if len(pts)<2:
+        return [stroke_circle(pts[0],state.width/2,state.matrix)] if pts and len(path.commands)>1 and state.cap==1 and not path.closed else []
     if state.dash:return outline_dashed_polyline(pts,path.closed,state)
     segments=list(zip(pts,pts[1:]+([pts[0]] if path.closed else [])))
     directions=[];result=[];r=state.width/2
@@ -334,7 +363,8 @@ def outline_polyline_stroke(path,state):
         vertex=pts[i];before=directions[(i-1)%len(directions)];after=directions[i%len(directions)]
         cross=before[0]*after[1]-before[1]*after[0];dot=before[0]*after[0]+before[1]*after[1]
         if abs(cross)<1e-10:
-            if dot<0:raise ConversionError('Reversing nonuniform polyline joins are unsupported')
+            if dot<0 and state.join==1:
+                result.append(stroke_circle(vertex,r,state.matrix))
             continue
         if state.join==1:
             result.append(stroke_circle(vertex,r,state.matrix));continue
@@ -358,8 +388,6 @@ def outline_polyline_stroke(path,state):
 
 def outline_straight_strokes(paths, state):
     """Expand single-segment strokes in stroking user space, then apply CTM."""
-    if any(v==0 for v in state.dash) and state.cap!=1:
-        raise ConversionError('Zero-length nonuniform dashes require round caps')
     a,b,c,d,_,_ = state.matrix
     det = a*d-b*c
     if abs(det)<1e-12:
@@ -381,7 +409,12 @@ def outline_straight_strokes(paths, state):
         ux,uy=(d*dx-c*dy)/det,(-b*dx+a*dy)/det
         length=math.hypot(ux,uy)
         if length<1e-12:
-            raise ConversionError('Degenerate nonuniform stroke')
+            if state.cap==1:
+                x,y=start
+                center=((d*(x-state.matrix[4])-c*(y-state.matrix[5]))/det,
+                        (-b*(x-state.matrix[4])+a*(y-state.matrix[5]))/det)
+                result.append(stroke_circle(center,state.width/2,state.matrix))
+            continue
         if state.dash:
             pattern=state.dash*2 if len(state.dash)%2 else state.dash
             phase=state.phase%sum(pattern)
@@ -401,7 +434,14 @@ def outline_straight_strokes(paths, state):
                     last=(start[0]+dx*end_position/length,start[1]+dy*end_position/length)
                     if remaining==0:
                         x,y=first;center=((d*(x-state.matrix[4])-c*(y-state.matrix[5]))/det,(-b*(x-state.matrix[4])+a*(y-state.matrix[5]))/det)
-                        result.append(stroke_circle(center,state.width/2,state.matrix))
+                        if state.cap==1:
+                            result.append(stroke_circle(center,state.width/2,state.matrix))
+                        elif state.cap==2:
+                            t=(ux/length,uy/length);r=state.width/2
+                            corners=[(center[0]+r*(X*t[0]-Y*t[1]),center[1]+r*(X*t[1]+Y*t[0]))
+                                     for X,Y in ((-1,1),(1,1),(1,-1),(-1,-1))]
+                            result.append(Subpath([('m' if i==0 else 'L',point(state.matrix,*v))
+                                                   for i,v in enumerate(corners)],True))
                     else:
                         result.extend(outline_straight_strokes([Subpath([('m',first),('L',last)])],solid))
                 if end_position<position+remaining:break
@@ -482,17 +522,37 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
         if not isinstance(mask,pikepdf.Stream) or str(mask.get('/Subtype')) != '/Image':
             raise ConversionError("Only grayscale image soft masks are supported")
         mask_bits = int(mask.get('/BitsPerComponent',0))
-        if (int(mask.Width),int(mask.Height)) != (width,height) or str(mask.get('/ColorSpace')) != '/DeviceGray' or mask_bits not in (1,2,4,8,16):
-            raise ConversionError("Image soft mask must be grayscale with matching dimensions")
+        mask_width,mask_height = int(mask.Width),int(mask.Height)
+        matching = (mask_width,mask_height)==(width,height)
+        common_grid = (mask_width>0 and mask_height>0 and mask_width*mask_height<=40_000_000
+                       and not mask.get('/Interpolate',False) and not image.get('/Interpolate',False))
+        if (not matching and not common_grid) or str(mask.get('/ColorSpace')) != '/DeviceGray' or mask_bits not in (1,2,4,8,16):
+            raise ConversionError("Image soft mask must be grayscale with matching dimensions or noninterpolated sample grids")
+        if not matching and math.lcm(width,mask_width)*math.lcm(height,mask_height)>40_000_000:
+            raise ConversionError('Combined image/mask sample grid exceeds 40 million pixels')
         if any(mask.get(k) is not None for k in ('/Mask','/SMask')):
             raise ConversionError("Nested image soft masks are unsupported")
         if mask.get('/Matte') is not None:
+            if not matching:
+                raise ConversionError('Preblended soft mask Matte requires matching image dimensions')
             try:
                 matte = tuple(map(float,mask.Matte))
             except (ValueError,TypeError) as exc:
                 raise ConversionError('Invalid soft mask Matte') from exc
             channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
-            if indexed or len(matte)!=channels or not all(math.isfinite(v) and 0<=v<=1 for v in matte):
+            if indexed:
+                # Indexed Matte is a color in the parent Indexed space: one
+                # palette index, rather than base-space RGB/CMYK components.
+                if len(matte)!=1 or not math.isfinite(matte[0]) or matte[0]!=int(matte[0]) or not 0<=matte[0]<=int(space[2]):
+                    raise ConversionError('Invalid Indexed soft mask Matte')
+                lookup=space[3]
+                if not isinstance(lookup,(pikepdf.Stream,pikepdf.String)):
+                    raise ConversionError('Indexed Matte palette must be a string or stream')
+                palette=lookup.read_bytes() if isinstance(lookup,pikepdf.Stream) else bytes(lookup)
+                offset=int(matte[0])*channels
+                if len(palette)<offset+channels:raise ConversionError('Invalid Indexed Matte palette')
+                matte=tuple(v/255 for v in palette[offset:offset+channels])
+            if len(matte)!=channels or not all(math.isfinite(v) and 0<=v<=1 for v in matte):
                 raise ConversionError('Invalid or unsupported soft mask Matte')
         mask_decode = mask.get('/Decode')
         if mask_decode is not None:
@@ -503,7 +563,7 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
         try:
             if mask_bits == 16:
                 raw = mask.read_bytes()
-                if len(raw)!=width*height*2:
+                if len(raw)!=mask_width*mask_height*2:
                     raise ConversionError('Invalid 16-bit soft mask sample length')
                 alpha = bytes((int.from_bytes(raw[i:i+2],'big')+128)//257 for i in range(0,len(raw),2))
             else:
@@ -525,8 +585,9 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
     if decode is not None: del image['/Decode']
     if hard_mask is not None: del image['/Mask']
     original_space = image.get('/ColorSpace')
-    if profile is not None:
-        image['/ColorSpace'] = pikepdf.Array([space[0],base,space[2],space[3]]) if indexed else base
+    # PdfImage reads the XObject dictionary, rather than the caller's resource
+    # scope. Use the resolved space while decoding, then restore the source.
+    image['/ColorSpace'] = pikepdf.Array([space[0],base,space[2],space[3]]) if indexed else base
     try:
         decoded = pikepdf.PdfImage(image).as_pil_image() if bits==8 and not indexed else None
         mode = {'RGB':'RGB','CMYK':'CMYK','Gray':'L'}[model]
@@ -581,7 +642,8 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
                 tables = [round(255*(limits[2*c]+(limits[2*c+1]-limits[2*c])*i/255)) for c in range(channels) for i in range(256)]
                 pixels = image_pixels.point(tables).tobytes()
     finally:
-        if profile is not None: image['/ColorSpace'] = original_space
+        if original_space is not None: image['/ColorSpace'] = original_space
+        else: del image['/ColorSpace']
         if mask is not None: image['/SMask'] = mask
         if hard_mask is not None: image['/Mask'] = hard_mask
         if decode is not None: image['/Decode'] = decode
@@ -619,6 +681,18 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
             alpha = bytes(0 if all(limits[2*c]<=original_samples[i+c]<=limits[2*c+1] for c in range(channels)) else 255 for i in range(0,len(pixels),channels))
         else: raise ConversionError("Unsupported hard image mask")
     channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
+    if mask is not None and not matching:
+        # Each source grid partitions the same unit image rectangle. Their LCM
+        # grid retains every original boundary with exact sample replication.
+        from PIL import Image
+        target=(math.lcm(width,mask_width),math.lcm(height,mask_height))
+        if target!=(width,height):
+            pixels=Image.frombytes({'RGB':'RGB','CMYK':'CMYK','Gray':'L'}[model],(width,height),pixels).resize(
+                target,Image.Resampling.NEAREST).tobytes()
+        if target!=(mask_width,mask_height):
+            alpha=Image.frombytes('L',(mask_width,mask_height),alpha).resize(
+                target,Image.Resampling.NEAREST).tobytes()
+        width,height=target
     if len(pixels) != width*height*channels or (alpha is not None and len(alpha) != width*height):
         raise ConversionError("Decoded image length is invalid")
     if matte is not None:
@@ -770,8 +844,10 @@ def read_drawing(page, *, root=None) -> Drawing:
         raise ConversionError("Annotations are unsupported")
     group = page.obj.get('/Group')
     if group is not None:
-        if (str(group.get('/S')) != '/Transparency' or bool(group.get('/I',False)) or bool(group.get('/K',False)) or str(group.get('/CS')) not in ('/DeviceRGB','/DeviceCMYK')):
-            raise ConversionError("Only nonisolated, nonknockout RGB/CMYK page transparency groups are supported")
+        if (str(group.get('/S')) != '/Transparency' or str(group.get('/CS')) not in ('/DeviceRGB','/DeviceCMYK')):
+            raise ConversionError("Only RGB/CMYK page transparency groups are supported")
+        if (group.get('/I',False) or group.get('/K',False)) and layer_map:
+            raise ConversionError('Isolated/knockout page groups with PDF layers are unsupported (nonisolated, nonknockout required)')
     box = tuple(float(v) for v in page.obj.get("/CropBox", page.obj["/MediaBox"]))
     if len(box) != 4 or not all(math.isfinite(v) for v in box) or box[2] <= box[0] or box[3] <= box[1]:
         raise ConversionError("Invalid page box")
@@ -795,6 +871,11 @@ def read_drawing(page, *, root=None) -> Drawing:
     painted = []
     images = []
     items = []
+    page_boundary = None
+    if group is not None and (group.get('/I',False) or group.get('/K',False)):
+        page_boundary = GroupBoundary(copy(state),True,bool(group.get('/I',False)),
+            'RGB' if str(group.get('/CS'))=='/DeviceRGB' else 'CMYK',bool(group.get('/K',False)))
+        items.append(page_boundary)
     pending_clip = None
     used_spots: dict[str, Spot] = {}
     operators: dict[str, int] = {}
@@ -944,6 +1025,8 @@ def read_drawing(page, *, root=None) -> Drawing:
             if mode>=4: text_clips.extend(glyph_paths)
             if glyph_paths and mode not in (3,7):
                 paint = 'stroke' if mode in (1,5) else 'both' if mode in (2,6) else 'fill'
+                if paint!='fill' and state.stroke_adjust:
+                    raise ConversionError('Device-dependent text stroke adjustment is unsupported')
                 if state.overprint_mode == 0:
                     active_colors = ([state.fill] if paint!='stroke' and state.fill_overprint else []) + ([state.stroke] if paint!='fill' and state.stroke_overprint else [])
                     if any(isinstance(c,Gradient) or c.model in ('CMYK','Gray') for c in active_colors):
@@ -1146,6 +1229,10 @@ def read_drawing(page, *, root=None) -> Drawing:
                     continue
                 if key == '/FL':
                     continue
+                if key == '/SA':
+                    if type(value) is not bool:raise ConversionError('Invalid stroke adjustment flag')
+                    state.stroke_adjust=value
+                    continue
                 if key == '/AIS' and not bool(value): continue
                 if key == "/SMask" and str(value) == "/None": continue
                 if key == "/op": state.fill_overprint = bool(value); continue
@@ -1224,6 +1311,8 @@ def read_drawing(page, *, root=None) -> Drawing:
                     painted.append(item);items.append(item)
             else:
                 image_space = image.get('/ColorSpace')
+                from .image_resources import resolve_image_space
+                image_space = resolve_image_space(image_space,resources)
                 default = {'/DeviceRGB':'/DefaultRGB','/DeviceCMYK':'/DefaultCMYK','/DeviceGray':'/DefaultGray'}.get(str(image_space))
                 if default and default in resources.get('/ColorSpace',{}):
                     image_space = resources.ColorSpace[default]
@@ -1235,6 +1324,8 @@ def read_drawing(page, *, root=None) -> Drawing:
             if paths and op != "n":
                 if op in ("s", "b", "b*"): paths[-1].closed = True
                 paint = "stroke" if op in ("S","s") else "both" if op[0] in "Bb" else "fill"
+                if paint!='fill' and state.stroke_adjust:
+                    raise ConversionError('Device-dependent stroke adjustment is unsupported')
                 if paint != "fill" and state.width == 0:
                     raise ConversionError("Zero-width hairline strokes are unsupported")
                 if paint != 'fill' and isinstance(state.stroke, Gradient):
@@ -1304,6 +1395,9 @@ def read_drawing(page, *, root=None) -> Drawing:
         else:
             raise ConversionError(f"Unsupported PDF operator '{op}'. No output was written. See README for supported paths, images and transparency.")
     if stack or paths or pending_clip is not None or marked or scopes or text_active: raise ConversionError("Unbalanced or unfinished PDF graphics")
+    if page_boundary is not None:
+        items.append(GroupBoundary(page_boundary.state,False,page_boundary.isolated,
+                                   None,page_boundary.knockout))
     models = set()
     for item in items:
         if isinstance(item,GroupBoundary): continue

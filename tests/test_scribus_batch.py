@@ -216,3 +216,33 @@ if case in ('blocked','declined'):
     result=subprocess.run([sys.executable,'-c',code,str(SCRIPT.parent),str(request),case],
                           env=env,capture_output=True,text=True,timeout=20)
     assert result.returncode==0,result.stderr
+
+
+@pytest.mark.parametrize('symlink',[False,True])
+def test_cross_filesystem_backup_restoration_after_late_failure(tmp_path,monkeypatch,symlink):
+    import errno
+    from pdf2ai.batch_publish import publish_batch
+    stage=tmp_path/'stage';stage.mkdir()
+    destinations=[tmp_path/name for name in ('a.ai','b.ai','c.ai')]
+    sources=[stage/name.name for name in destinations]
+    for source in sources:source.write_bytes(b'new')
+    for destination in destinations:destination.write_bytes(b'old')
+    target=tmp_path/'original';target.write_bytes(b'original target')
+    if symlink:
+        destinations[1].unlink();destinations[1].symlink_to('original')
+    real_replace=os.replace
+    def simulate_filesystems(source,destination):
+        source,destination=Path(source),Path(destination)
+        if source.parent==stage and destination==destinations[2]:raise OSError('late publication failure')
+        if source.parent.name.startswith('.pdf2ai-recovery-') and destination==destinations[1]:
+            raise OSError(errno.EXDEV,'cross-device link')
+        return real_replace(source,destination)
+    monkeypatch.setattr('pdf2ai.batch_publish.os.replace',simulate_filesystems)
+    with pytest.raises(OSError,match='late publication failure'):
+        publish_batch(zip(sources,destinations),overwrite=True)
+    assert destinations[0].read_bytes()==b'old' and destinations[2].read_bytes()==b'old'
+    if symlink:
+        assert destinations[1].is_symlink() and os.readlink(destinations[1])=='original'
+        assert target.read_bytes()==b'original target'
+    else:assert destinations[1].read_bytes()==b'old'
+    assert not list(tmp_path.glob('.pdf2ai-*'))

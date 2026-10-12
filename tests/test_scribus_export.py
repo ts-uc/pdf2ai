@@ -257,3 +257,41 @@ def test_combined_mixed_fallback_and_strict_is_atomic(tmp_path):
 
 def test_unknown_output_mode_is_rejected(tmp_path):
     with pytest.raises(ValueError):bridge.output_paths(tmp_path/'a.ai',[1,2],'other')
+
+
+@pytest.mark.parametrize('cancelled',[False,True])
+def test_pdf_generation_monitor_accepts_cancel_before_conversion(tmp_path,monkeypatch,cancelled):
+    pytest.importorskip('PySide6')
+    monkeypatch.setenv('QT_QPA_PLATFORM','offscreen')
+    pdf=SimpleNamespace()
+    def save():
+        Path(pdf.file).write_bytes(b'pdf')
+        if cancelled:(tmp_path/'pdf-progress-cancel').write_text('cancel')
+    pdf.save=save
+    status=bridge.export_pdf_monitored(SimpleNamespace(PDFfile=lambda:pdf),tmp_path/'out.pdf',[1],{},sys.executable)
+    assert status=={'cancelled':cancelled,'timed_out':False}
+    assert (tmp_path/'pdf-progress-done').exists()
+
+
+def test_pdf_generation_timeout_stops_before_ai_conversion(tmp_path,monkeypatch):
+    pytest.importorskip('PySide6')
+    monkeypatch.setenv('QT_QPA_PLATFORM','offscreen')
+    pdf=SimpleNamespace(save=lambda:None)
+    status=bridge.export_pdf_monitored(SimpleNamespace(PDFfile=lambda:pdf),tmp_path/'out.pdf',[1],
+        {'timeout_minutes':.000001},sys.executable)
+    assert status=={'cancelled':True,'timed_out':True}
+    assert not list(tmp_path.glob('*.ai'))
+
+
+def test_pdf_monitor_honors_cancel_during_window_close(tmp_path,monkeypatch):
+    def launch(*args,**kwargs):
+        (tmp_path/'pdf-progress-ready').touch()
+        def close(**kwargs):
+            (tmp_path/'pdf-progress-cancel').write_text('cancel')
+            return b'',b''
+        return SimpleNamespace(poll=lambda:None,communicate=close)
+    monkeypatch.setattr(bridge.subprocess,'Popen',launch)
+    pdf=SimpleNamespace()
+    pdf.save=lambda:Path(pdf.file).write_bytes(b'pdf')
+    status=bridge.export_pdf_monitored(SimpleNamespace(PDFfile=lambda:pdf),tmp_path/'out.pdf',[1],{},sys.executable)
+    assert status['cancelled'] and not status['timed_out']
