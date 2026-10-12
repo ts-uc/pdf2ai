@@ -146,6 +146,57 @@ def test_toyo_xmp_records_actual_lab_swatch(tmp_path):
         assert '/Group' in pdf.pages[0].obj
 
 
+def test_xmp_only_title_is_preserved(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.ai';document(source)
+    with pikepdf.open(source,allow_overwriting_input=True) as pdf:
+        with pdf.open_metadata(set_pikepdf_as_editor=False,update_docinfo=False) as metadata:
+            metadata['dc:title']='XMP artwork title'
+        pdf.save(source)
+    convert(source,output,raster_fallback=False)
+    with pikepdf.open(output) as pdf:
+        assert str(pdf.docinfo['/Title'])=='XMP artwork title'
+        with pdf.open_metadata(set_pikepdf_as_editor=False,update_docinfo=False) as metadata:
+            assert metadata['dc:title']=='XMP artwork title'
+
+
+@pytest.mark.parametrize('stroke', [False, True])
+@pytest.mark.parametrize('used', [False, True])
+def test_visible_flags_only_consider_used_paint_settings(tmp_path,stroke,used):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.ai';document(source)
+    apply_to_stroke=stroke if used else not stroke
+    with pikepdf.open(source,allow_overwriting_input=True) as pdf:
+        page=pdf.pages[0]
+        page.Resources.ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(
+            ca=1 if apply_to_stroke else .5,CA=.5 if apply_to_stroke else 1,
+            op=not apply_to_stroke,OP=apply_to_stroke,OPM=1))
+        page.Contents=pdf.make_stream(b'/A gs /S cs 1 scn /S CS 1 SCN 2 w 10 20 30 40 re '+(b'S' if stroke else b'f'))
+        pdf.save(source)
+    convert(source,output,raster_fallback=False)
+    with pikepdf.open(output) as pdf:
+        with pdf.open_metadata(set_pikepdf_as_editor=False,update_docinfo=False) as metadata:
+            ns='{http://ns.adobe.com/xap/1.0/t/pg/}'
+            assert metadata[ns+'HasVisibleTransparency']==str(used)
+            assert metadata[ns+'HasVisibleOverprint']==str(used)
+
+
+def test_hidden_artwork_does_not_set_visible_flags(tmp_path):
+    source=tmp_path/'source.pdf';output=tmp_path/'output.ai';document(source)
+    with pikepdf.open(source,allow_overwriting_input=True) as pdf:
+        layer=pdf.make_indirect(pikepdf.Dictionary(Type=pikepdf.Name.OCG,Name='Hidden'))
+        pdf.Root.OCProperties=pikepdf.Dictionary(OCGs=[layer],D=pikepdf.Dictionary(OFF=[layer]))
+        page=pdf.pages[0]
+        page.Resources.Properties=pikepdf.Dictionary(L=layer)
+        page.Resources.ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(ca=.5,op=True,OPM=1))
+        page.Contents=pdf.make_stream(b'/OC /L BDC /A gs /S cs 1 scn 10 20 30 40 re f EMC')
+        pdf.save(source)
+    convert(source,output,raster_fallback=False)
+    with pikepdf.open(output) as pdf:
+        with pdf.open_metadata(set_pikepdf_as_editor=False,update_docinfo=False) as metadata:
+            ns='{http://ns.adobe.com/xap/1.0/t/pg/}'
+            assert metadata[ns+'HasVisibleTransparency']=='False'
+            assert metadata[ns+'HasVisibleOverprint']=='False'
+
+
 def test_combined_output_keeps_page_order_and_page_thumbnails(tmp_path):
     source=tmp_path/'source.pdf';output=tmp_path/'output.ai';document(source)
     with pikepdf.open(source,allow_overwriting_input=True) as pdf:

@@ -24,3 +24,9 @@ Scribus用パレットは従来の`integrations/scribus/palettes/DIC_Lab.xml`を
 再保存前も特色のCMYK定義は基準と一致する。ただし元ScribusページのCMYK透明グループを保持するため、MuPDF表示では基準よりG/Bが1大きい（平均画素差0.10892）例がある。Illustrator再保存後の比較は差0。PDFページの合成構造を無条件に削除して一致させる変更は行っていない。
 
 変換記録：`output/fidelity-check/after/dic1-cmyk-conversion.json`。比較：`dic1-cmyk-visual.json`と`dic1-cmyk-comparison.png`。旧出力と基準ファイルは変更していない。
+
+## 深いリソース定義の再点検
+
+使われていないForm XObjectのリソース定義が1100段あるPDFで、事前検査はベクター対応と判定するのに、DIC正規化の再帰走査が`RecursionError`になる問題を修正した。走査を明示的なスタックへ変更し、循環・共有リソースの重複検査も維持する。
+
+実際に描画するFormの既存の入れ子上限は維持する。上限を超える描画ではstrict診断を返し、通常変換では画像化へ進める。単ページ・結合・CLI、未使用の深い定義、循環、strict時の既存AI保護・画像化の5件を追加し、全370テスト成功。参考用AIは変更していない。

@@ -41,12 +41,14 @@ def normalize_pdf_spots(page):
     seen = set()
     changed = set()
 
-    def resources(value):
+    pending = [page.obj.get('/Resources')]
+    while pending:
+        value = pending.pop()
         if not isinstance(value, pikepdf.Dictionary):
-            return
+            continue
         if value.objgen != (0, 0):
             if value.objgen in seen:
-                return
+                continue
             seen.add(value.objgen)
         spaces = value.get('/ColorSpace', pikepdf.Dictionary())
         if not isinstance(spaces, pikepdf.Dictionary):
@@ -71,7 +73,7 @@ def normalize_pdf_spots(page):
             changed.add(canonical)
         objects = value.get('/XObject', pikepdf.Dictionary())
         if not isinstance(objects, pikepdf.Dictionary):
-            return
+            continue
         for obj in objects.values():
             if not isinstance(obj, pikepdf.Stream):
                 continue
@@ -79,7 +81,6 @@ def normalize_pdf_spots(page):
                 if obj.objgen in seen:
                     continue
                 seen.add(obj.objgen)
-                resources(obj.get('/Resources'))
+                pending.append(obj.get('/Resources'))
 
-    resources(page.obj.get('/Resources'))
     return sorted(changed)

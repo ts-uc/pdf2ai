@@ -91,8 +91,7 @@ def set_document_metadata(pdf, output, moment, drawings):
         if not preferences:
             del pdf.Root['/ViewerPreferences']
     timestamp = moment.strftime('D:%Y%m%d%H%M%SZ')
-    title = str(pdf.docinfo.get('/Title', '')) or output.stem
-    pdf.docinfo['/Title'] = title
+    title = str(pdf.docinfo.get('/Title', ''))
     pdf.docinfo['/ModDate'] = timestamp
     if '/CreationDate' not in pdf.docinfo:
         pdf.docinfo['/CreationDate'] = timestamp
@@ -103,7 +102,11 @@ def set_document_metadata(pdf, output, moment, drawings):
         if '/ProcSet' in page.Resources:
             del page.Resources['/ProcSet']
     with pdf.open_metadata(set_pikepdf_as_editor=False, update_docinfo=False) as metadata:
-        metadata['dc:title'] = title
+        xmp_title = metadata.get('dc:title')
+        title = title or xmp_title or output.stem
+        pdf.docinfo['/Title'] = title
+        if not xmp_title:
+            metadata['dc:title'] = title
         metadata['dc:format'] = 'application/pdf'
         date = moment.isoformat(timespec='seconds')
         if 'xmp:CreateDate' not in metadata:
@@ -118,11 +121,25 @@ def set_document_metadata(pdf, output, moment, drawings):
         page_namespace = '{http://ns.adobe.com/xap/1.0/t/pg/}'
         metadata[page_namespace+'NPages'] = str(len(pdf.pages))
         if drawings:
-            items = [item for drawing in drawings for item in drawing.items or drawing.paths]
-            transparent = any(isinstance(item, GroupBoundary) or item.state.fill_alpha != 1
-                              or isinstance(item, PaintedPath) and item.paint != 'fill' and item.state.stroke_alpha != 1
-                              or isinstance(item, Raster) and item.alpha is not None for item in items)
-            overprint = any(item.state.fill_overprint or item.state.stroke_overprint for item in items)
+            items = [item for drawing in drawings for item in drawing.items or drawing.paths
+                     if item.state.layer is None or item.state.layer.visible]
+            def has_transparency(item):
+                if isinstance(item, GroupBoundary) or item.state.blend_mode != 'Normal':
+                    return True
+                if isinstance(item, PaintedPath):
+                    return ((item.paint != 'stroke' and item.state.fill_alpha != 1)
+                            or (item.paint != 'fill' and item.state.stroke_alpha != 1))
+                if isinstance(item, Raster):
+                    return (item.state.fill_alpha != 1 or item.alpha is not None
+                            and item.alpha.count(255) != len(item.alpha))
+                return False
+            def has_overprint(item):
+                if isinstance(item, PaintedPath):
+                    return ((item.paint != 'stroke' and item.state.fill_overprint)
+                            or (item.paint != 'fill' and item.state.stroke_overprint))
+                return isinstance(item, Raster) and item.state.fill_overprint
+            transparent = any(has_transparency(item) for item in items)
+            overprint = any(has_overprint(item) for item in items)
             metadata[page_namespace+'HasVisibleTransparency'] = str(transparent)
             metadata[page_namespace+'HasVisibleOverprint'] = str(overprint)
 

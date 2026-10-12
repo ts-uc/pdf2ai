@@ -4,12 +4,13 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+from .path_conflicts import duplicate_destinations
 
 
 def publish_batch(files, *, overwrite=False):
     files = [(Path(source),Path(destination)) for source,destination in files]
     if not files:return
-    if len({p.resolve() for _,p in files})!=len(files):
+    if duplicate_destinations(p for _, p in files):
         raise ValueError('Duplicate batch destinations')
     recovery = Path(tempfile.mkdtemp(prefix='.pdf2ai-recovery-',dir=files[0][1].parent))
     entries = []

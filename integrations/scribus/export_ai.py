@@ -242,7 +242,8 @@ def prepare_request(request):
         existing = [path for path in destinations if os.path.lexists(path)]
         if existing:
             raise FileExistsError('出力が既に存在します: ' + ', '.join(path.name for path in existing))
-    if source.resolve() in {p.resolve() for p in destinations}:
+    from pdf2ai.path_conflicts import paths_conflict
+    if any(paths_conflict(source, path) for path in destinations):
         raise ValueError('Input/output path conflict')
     with pikepdf.open(source) as pdf:
         if pdf.is_encrypted:raise ValueError('Encrypted PDFs are unsupported')

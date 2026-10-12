@@ -14,6 +14,7 @@ from PIL import Image
 from fontTools.pens.boundsPen import BoundsPen
 
 from .codec import MARKER, compress, decode_private
+from .path_conflicts import paths_conflict
 from .document_defaults import (fill_artwork_bounds, align_page_settings, add_page_thumbnails,
                                 set_document_metadata, set_structured_metadata)
 from .vector import Color, ConversionError, Drawing, Gradient, Raster, Clip, Subpath, PaintedPath, GroupBoundary, BLEND_MODES, STROKE_CURVE_FLATNESS, read_drawing
@@ -323,7 +324,7 @@ def read_private(pdf) -> bytes | None:
 def convert(source: Path | str, output: Path | str, *, page_number: int | None = None,
             overwrite: bool = False, outline_text: bool = False, ghostscript: str | None = None, raster_fallback: bool = True, raster_dpi: float = 300) -> dict:
     source,output = Path(source),Path(output)
-    if source.resolve() == output.resolve(): raise ConversionError("Input and output must differ")
+    if paths_conflict(source, output): raise ConversionError("Input and output must differ")
     if output.suffix.lower() != ".ai": raise ConversionError("Output must have an .ai extension")
     if output.exists() and not overwrite: raise ConversionError(f"Output already exists: {output}")
     if not output.parent.is_dir(): raise ConversionError(f"Output directory does not exist: {output.parent}")

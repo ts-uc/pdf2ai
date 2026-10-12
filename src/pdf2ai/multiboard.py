@@ -9,6 +9,7 @@ import pikepdf
 from .layers import Layer
 from .native import drawing_report, make_private, save_ai
 from .document_defaults import align_page_settings
+from .path_conflicts import paths_conflict
 from .vector import (Clip, ConversionError, Drawing, Gradient, GroupBoundary, PaintedPath, Raster,
                      Subpath, compose, read_drawing)
 
@@ -82,7 +83,7 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
                      raster_fallback=True, raster_dpi=300, progress=None):
     """Convert all pages atomically; a failed page prevents publishing the AI."""
     source, output = Path(source), Path(output)
-    if source.resolve() == output.resolve():
+    if paths_conflict(source, output):
         raise ConversionError('Input and output must differ')
     if output.suffix.lower() != '.ai' or not output.parent.is_dir():
         raise ConversionError('出力先フォルダーと .ai 拡張子を確認してください。')

@@ -87,6 +87,8 @@ pdf2ai text.pdf -o text.ai --outline-text --ghostscript "C:\Program Files\gs\gs1
 
 既存の出力を上書きする場合はCLIで`--overwrite`を指定します。Scribus連携では設定画面で対象ページ・書き出し方法を選び、既存の出力がある場合は上書きを確認します。
 
+同じ保存先で、大文字小文字やUnicodeの別表記が同名ファイルになる場合は、変換・公開前に競合を拒否します。レポートと入力・出力の競合、入力へのハードリンク等の別名も検査します。[追加点検の記録](output-path-conflicts.md)。
+
 仮想環境を作成した場合は、プロジェクトのルートからランチャーを実行できます。
 
 ```sh

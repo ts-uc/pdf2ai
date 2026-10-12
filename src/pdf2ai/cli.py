@@ -10,6 +10,7 @@ import pikepdf
 from .native import convert
 from .vector import ConversionError
 from .multiboard import convert_document
+from .path_conflicts import duplicate_destinations, paths_conflict
 
 
 def select_pages(expression, count):
@@ -85,7 +86,7 @@ def main(argv=None) -> int:
         try:
             if args.pages is not None and not args.pages.strip():
                 raise ConversionError('対象ページを指定してください（all または 1,3-5）')
-            if args.report and (not args.report.parent.is_dir() or args.report.resolve() in {p.resolve() for p in args.inputs}):
+            if args.report and (not args.report.parent.is_dir() or any(paths_conflict(args.report, p) for p in args.inputs)):
                 raise ConversionError('レポートの保存先が不正です')
             if args.report and args.report.is_dir():
                 raise ConversionError('レポートの保存先がファイルではなくフォルダーです')
@@ -122,7 +123,6 @@ def main(argv=None) -> int:
                     plans.extend((source, base.with_name(f'{base.stem}_{number:03d}.ai'), number) for number in selected)
             else:
                 plans.append((source, base, args.page))
-        outputs = [out.resolve() for _, out, _ in plans]
         for _, out, _ in plans:
             if out.suffix.lower() != '.ai' or not out.parent.is_dir():
                 raise ConversionError('出力先フォルダーと .ai 拡張子を確認してください')
@@ -130,12 +130,12 @@ def main(argv=None) -> int:
                 raise ConversionError(f'Output already exists: {out}')
             if out.is_dir():
                 raise ConversionError(f'出力先がファイルではなくフォルダーです: {out}')
-        if len(set(outputs)) != len(outputs):
+        if duplicate_destinations([out for _, out, _ in plans]):
             raise ConversionError('複数入力の出力名が衝突しています')
-        if set(outputs) & {p.resolve() for p in args.inputs}:
+        if any(paths_conflict(out, source) for _, out, _ in plans for source in args.inputs):
             raise ConversionError('出力先が入力ファイルと衝突しています')
         if args.report:
-            if args.report.resolve() in {p.resolve() for p in args.inputs} | set(outputs):
+            if any(paths_conflict(args.report, p) for p in args.inputs):
                 raise ConversionError('report path conflicts with input/output')
             if not args.report.parent.is_dir():
                 raise ConversionError('レポートの保存先フォルダーが存在しません')
@@ -143,6 +143,8 @@ def main(argv=None) -> int:
                 raise ConversionError('レポートの保存先がファイルではなくフォルダーです')
             if os.path.lexists(args.report) and not args.overwrite:
                 raise ConversionError(f'Report already exists: {args.report}')
+            if duplicate_destinations([*(out for _, out, _ in plans), args.report]):
+                raise ConversionError('report path conflicts with input/output')
     except (ConversionError, pikepdf.PdfError, pikepdf.PasswordError, OSError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 1
