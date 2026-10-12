@@ -1,87 +1,164 @@
-# PDF2AI
+# PDF2AI：Scribus・PDFからIllustratorのAIファイルへ変換
 
-Create Adobe Illustrator CC2020 files from Scribus documents or PDFs without Illustrator. Available for Windows, macOS, and GNU/Linux.
+**PDF2AIは、Scribus文書やPDFをAdobe Illustrator CC2020形式のAIファイルへ書き出すツールです。** 変換時にIllustratorは不要です。対応する図形は編集できるベクターとして出力し、DIC・東洋インキ（TOYO）の特色にも対応しています。
 
-Illustrator を使わずに、Scribus 文書や PDF を Adobe Illustrator CC2020 形式の AI ファイルに変換できます。Windows・macOS・GNU/Linux に対応しています。
+Scribusからは設定画面で書き出せます。既存のPDFは、ターミナルからコマンドを実行して変換します。Windows・macOS・GNU/Linux向けに提供しています。現在のバージョンは **1.0.0** です。
 
-画面からの操作はScribusの書き出し設定画面に対応しています。PDFを直接変換する場合はCLIを使用します。
+PDF2AI converts Scribus documents and PDF files to Adobe Illustrator CC2020 AI files without requiring Illustrator for conversion. It supports editable vector paths, multiple artboards, and DIC / TOYO spot colors. Text is outlined; unsupported pages are rasterized unless strict mode is enabled.
 
-## Set up for Scribus / Scribus で使う準備
+> 文字はアウトラインになり、文字としての再編集はできません。未対応機能を含むページは、初期設定ではページ全体を画像に変換します。対応範囲には制限があるため、入稿前に出力内容を確認してください。
 
-You need **Scribus 1.6 or later with Scripter enabled** and **Python 3.10 or later**. Open a terminal in the folder containing this README, then run the commands below for your OS. This setup is needed only once.
+## PDF2AIでできること
 
-**Scripter が有効な Scribus 1.6 以降**と**Python 3.10 以降**を用意してください。この README があるフォルダーでターミナルを開き、OS に応じたコマンドを実行します。初回のみ必要な準備です。
+- **ScribusからAIを書き出す**：対象ページ・保存先・書き出し方法を画面で選択できます。
+- **PDFをAIへ変換する**：対応するパス・画像・グラデーション・レイヤーを取り込みます。
+- **複数ページを扱う**：ページ別のAIに保存するか、一つのAIの複数アートボードにまとめられます。
+- **DIC・TOYOの特色を保持する**：ベクター変換できるページでは、特色名と塗り・線の濃度を保持します。
+- **書き出し前に確認する**：ベクター対応可否の検査、画像化を禁止する設定、JSONログの出力に対応しています。
 
-**Windows (PowerShell)**
+## 動作環境
+
+| 用途 | 必要なもの |
+| --- | --- |
+| PDFを直接変換 | Python 3.10以降 |
+| Scribusから書き出し | Python 3.10以降と、Scripterが有効なScribus 1.6以降 |
+| 追加の文字アウトライン前処理 | Ghostscript。通常の変換には必須ではありません |
+
+必要なPythonパッケージは、次のインストール手順でまとめて導入できます。出力形式はIllustrator CC2020を対象にしています。別のIllustratorバージョンや制作・印刷環境での結果は、実際の出力で確認してください。
+
+## インストール：初回だけの準備
+
+リポジトリをダウンロードして展開し、**このREADMEがあるフォルダー**でターミナルを開いてください。OSに合わせて、次の2行を実行します。
+
+### Windows（PowerShell）
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install ".[scribus]"
 ```
 
-**macOS / GNU/Linux**
+### macOS・GNU/Linux
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install ".[scribus]"
 ```
 
-Keep the downloaded project folder together; use the script from its original location.
+この手順で、変換処理とScribusの設定画面に必要なパッケージが入ります。**PDFのコマンドライン変換だけを使う場合は、2行目の `".[scribus]"` を `"."` に置き換えられます。**
 
-ダウンロードしたフォルダーの構成を保ち、スクリプトは元の場所から使用してください。
+準備が終わったら、以下のどちらかの方法で変換してください。Scribus連携を使う場合は、ダウンロードしたフォルダーの構成を保ち、スクリプトを元の場所から実行します。
 
-## Export from Scribus / Scribus から AI を書き出す
+## ScribusからIllustrator形式のAIを書き出す
 
-1. Open the document you want to export in Scribus. / 書き出したい文書を Scribus で開きます。
-2. Choose **Script → Execute Script** and select [`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py). / **スクリプト → スクリプトを実行**から同ファイルを選びます。
-3. Choose the pages: `all` for all pages, `current` for the current page, or `1,3-5` for specific pages. / 対象ページを入力します。`all` は全ページ、`current` は現在のページ、`1,3-5` は指定ページです。
-4. Choose **ページ別のAIファイル** (separate files) or **対象ページを1つのAIファイルにまとめる** (one file), select the output filename, then click **書き出し** (Export). / **書き出し方法**でページ別または1つのAIにまとめる方法を選び、保存先とファイル名を指定して**書き出し**を押します。
-5. When warnings appear, review the preflight results, then click **書き出し** to proceed. If no warnings appear, export continues automatically. / 警告がある場合は**書き出し前チェック**で内容を確認して、**書き出し**を押します。警告がなければ自動で書き出しへ進みます。画像化禁止が有効で未対応ページがある場合は書き出せません。
+1. 書き出したい文書をScribusで開きます。
+2. **スクリプト → スクリプトを実行**（Script → Execute Script）から、[`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py) を選びます。
+3. **対象ページ**を指定します。全ページは `all`、現在のページは `current`、範囲指定は `1,3-5` のように入力します。
+4. **書き出し方法**と**保存先**を選び、**書き出し**を押します。
+5. 書き出し前チェックで警告が出た場合は、内容を確認して進めます。警告がなければ、そのまま変換が始まります。
 
-Separate output saves each page in an AI file, with original page numbers such as `design_001.ai`. Combined output saves the selected pages as separate artboards in a single `design.ai`. Next time, you can select the script from Scribus's recent scripts.
+### ページ別出力と複数アートボードの違い
 
-ページ別出力では、複数ページのファイル名に`design_001.ai`のように元のページ番号が付きます。まとめる場合は、選択した各ページを独立したアートボードとして1つの`design.ai`に保存します。初期設定はページ別です。次回からは Scribus の最近使ったスクリプトから実行できます。
+| 書き出し方法 | 出力結果 |
+| --- | --- |
+| ページ別のAIファイル（初期設定） | 各ページを別のAIに保存。複数ページなら `design_001.ai` など、元のページ番号が付きます |
+| 対象ページを1つのAIファイルにまとめる | 選択したページを独立したアートボードとして、一つの `design.ai` に保存します |
 
-全ページの変換が成功してからAIを一式保存します。途中の変換失敗やキャンセルでは既存AIを保持し、保存中の通常のエラーでは元のファイルへ復元します。PDF作成後はScribus連携の進捗画面で検査・変換の状況を確認し、キャンセルできます。保存・復元中はキャンセルできません。詳しい動作と検証範囲は[対応記録](docs/scribus-export-safety.md)を参照してください。
+ベクターの編集性を優先する場合は、**未対応機能があれば画像化せずエラーにする**を有効にしてください。未対応ページがあると、画像化して書き出す代わりに停止します。
 
-To use DIC colors, register them as **spot colors** in Scribus. Names such as `DIC 1` and `DIC 4` are also accepted and exported as spot swatches with the legacy DIC book's CMYK alternate values.
+設定画面では、画像化する場合の解像度、JSONログ、制限時間、裁ち落とし、トンボも指定できます。PDF作成・検査・変換の進捗画面からキャンセルできますが、ScribusのPDF作成中は完了待ちになります。
 
-DIC 色を使う場合は、Scribus で**特色**として登録してください。`DIC 1` や `DIC 4` のような名前でも、旧版DICカラーブックのCMYK代替値を持つ特色スウォッチとして書き出せます。`DIC 1s`はC=0%、M=16%、Y=17%、K=0%です。特色名と濃度を保持し、プロセスカラーには分解しません。
+全ページの変換が成功してから、AIを一式保存します。途中の変換失敗やキャンセルでは既存AIを保持し、保存中の通常のエラーでは元のファイルへ復元します。保存・復元中はキャンセルできません。詳しくは[Scribus書き出しの保存・キャンセル仕様](docs/scribus-export-safety.md)を参照してください。
 
-Import the supplied [DIC palette](integrations/scribus/palettes/DIC_Lab.xml) in Scribus’s color dialog to add all 1280 colors as spot colors.
+## PDFをAIファイルへ変換する（コマンドライン）
 
-Scribus の色設定ダイアログから同梱の [DIC Labパレット](integrations/scribus/palettes/DIC_Lab.xml)をインポートすると、1280 色を特色として追加できます。登録済みDIC名は、AI書き出し時にCMYK基準へそろえます。[変更と検証の記録](docs/dic-cmyk-reference.md)。
+インストール後、このREADMEがあるフォルダーで実行します。`input.pdf` を入力PDF、`output.ai` を保存先に置き換えてください。パスに空白がある場合は、`"My Design.pdf"` のように引用符で囲みます。
 
-TOYO spot colors are also supported. Import the separate [TOYO COLOR FINDER palette](integrations/scribus/palettes/TOYO_COLOR_FINDER_Lab.xml) or [TOYO 94 palette](integrations/scribus/palettes/TOYO_94_Lab.xml) in Scribus. Names such as `CF 10001`, `CF10001`, and `TOYO 0001` resolve to the corresponding Lab spot swatches.
-
-東洋インキの特色にも対応しています。Scribusで、DICとは別ファイルの[TOYO COLOR FINDERパレット](integrations/scribus/palettes/TOYO_COLOR_FINDER_Lab.xml)（1079色）または[TOYO 94パレット](integrations/scribus/palettes/TOYO_94_Lab.xml)（1050色）をインポートしてください。`CF 10001`・`CF10001`・`TOYO 0001`などの名前を対応するLab特色へ照合します。現行版と旧版の番号は別々に扱います。文字や図形をプロセスカラーで作った後に、名前だけで特色を復元する機能ではありません。詳しくは[TOYO対応記録](docs/toyo-spot-colors.md)を参照してください。
-
-**Check your output before submitting artwork.** This tool is experimental. Text becomes outlines, and pages containing unsupported features become images. Check the completion message and the resulting artwork.
-
-**入稿前に出力を確認してください。** 実験的なツールのため、文字はアウトラインになり、未対応機能を含むページは画像になります。完了メッセージと、書き出した内容を確認してください。
-
-## Convert an existing PDF / PDF を直接変換する
-
-After setup, run the following command from the folder containing this README. Replace `input.pdf` with your PDF and `output.ai` with the desired output filename.
-
-セットアップ後、この README があるフォルダーで次のコマンドを実行します。`input.pdf` を変換したい PDF に、`output.ai` を保存したいファイル名に置き換えてください。
-
-**Windows (PowerShell)**
+### Windows（PowerShell）
 
 ```powershell
 .\.venv\Scripts\python.exe run_pdf2ai.py input.pdf -o output.ai
 ```
 
-**macOS / GNU/Linux**
+### macOS・GNU/Linux
 
 ```sh
 .venv/bin/python run_pdf2ai.py input.pdf -o output.ai
 ```
 
-For a multipage PDF, add `--page 2` to convert page 2. See [the detailed guide](docs/technical.md) for other options, supported features, and troubleshooting.
+上のコマンドは1ページのPDF用です。複数ページのPDFでは、次のオプションで対象と保存方法を指定します。オプションはWindowsでも共通です。
 
-複数ページの PDF は、`--page 2` を追加すると 2 ページ目を変換できます。その他の使い方・対応機能・困ったときの設定は[詳細ガイド](docs/technical.md)を参照してください。
+| 目的 | 追加するオプション | 結果 |
+| --- | --- | --- |
+| 2ページ目だけを変換 | `--page 2` | 指定した `output.ai` に保存 |
+| 全ページを別々に保存 | `--pages all` | `output_001.ai` などに保存 |
+| 指定ページを別々に保存 | `--pages 1,3-5` | 元のページ番号を付けて保存 |
+| 全ページを一つのAIに結合 | `--combine` | 各ページをアートボードにして保存 |
+| 指定ページだけを結合 | `--combine --pages 1,3-5` | 選択したページを一つのAIに保存 |
+| 未対応ページの画像化を禁止 | `--strict` | 未対応機能があればエラー |
+| 結果をJSONに保存 | `--report result.json` | AIと変換結果を一括保存 |
+| 既存出力の上書きを許可 | `--overwrite` | 既存AI・指定したレポートを上書き |
 
-全ページをページ別に保存する場合は`--pages all`、1つのAIにまとめる場合は`--combine`を指定します。`--pages 1,3-5`で範囲を選択できます。`--check`はAIを作らず全ページのベクター対応可否を検査します。追加機能・検証結果と未完了事項は[課題への対応状況](docs/issue-resolution-progress.md)を参照してください。
+たとえば、全ページを一つのAIにまとめる場合は次のように実行します。
 
-CLIはすべての変換が成功してからAIとJSONを一括保存します。`--check --combine`で結合条件も事前検査できます。`--ask-password`または`--password-file`で暗号化PDF、`--flatten-annotations`で注釈の外観取り込み、`--timeout 秒`で変換時間を制限できます。[今回の対応範囲と検証結果](docs/medium-difficulty-improvements.md)を参照してください。
+```sh
+.venv/bin/python run_pdf2ai.py input.pdf --combine -o output.ai
+```
+
+### AIを作らずに対応可否を確認する
+
+```sh
+.venv/bin/python run_pdf2ai.py input.pdf --check
+```
+
+Windowsでは、冒頭の `.venv/bin/python` を `.\.venv\Scripts\python.exe` に置き換えてください。
+
+結合の配置・色空間の条件も調べる場合は `--check --combine` を使います。各ページの最初の未対応理由を表示する検査で、すべての問題や印刷品質を保証するものではありません。
+
+ほかに、`--ask-password`／`--password-file` による暗号化PDFの読み込み、`--flatten-annotations` による注釈・フォームの外観取り込み、`--timeout 秒` による変換時間の制限に対応しています。詳しくは[CLIオプションと対応形式](docs/technical.md)を参照してください。
+
+## DIC・東洋インキ（TOYO）の特色を使う
+
+Scribusの色設定で、必要なパレットをインポートし、**特色として**使用してください。DICとTOYOの色データ・パレットは独立しています。TOYOのパレットは、新旧カラーブック別に用意しています。
+
+| パレット | 色数 | 受け付ける色名の例 | AIの特色スウォッチ |
+| --- | ---: | --- | --- |
+| [DIC Lab](integrations/scribus/palettes/DIC_Lab.xml) | 1280 | `DIC 1`、`DIC 1s`、`DIC 4` | 旧版DICカラーブックのCMYK代替値 |
+| [TOYO COLOR FINDER Lab](integrations/scribus/palettes/TOYO_COLOR_FINDER_Lab.xml) | 1079 | `CF 10001`、`CF10001` | 対応するLab特色 |
+| [TOYO 94 Lab](integrations/scribus/palettes/TOYO_94_Lab.xml) | 1050 | `TOYO 0001`、`TOYO 1` | 対応するLab特色 |
+
+DICのパレットはLab値を使いますが、登録済みDIC名のAI出力はCMYK基準へそろえます。TOYOはLabを使い、対応するLab入力の実際の値を保持します。TOYOの新旧カラーブックは別々に扱います。
+
+ベクター変換できるページでは、特色名と塗り・線の濃度を保持し、特色をプロセスカラーへ分解しません。**ページが画像化された場合は、特色分版とパスの編集性が失われます。** 特色を残す必要があるときは、Scribusの画像化禁止設定またはCLIの `--strict` を使ってください。
+
+プロセスカラーへ変換済みの図形から、名前だけで元の特色を復元する機能はありません。収録色・色名・代替値の詳しい説明は、[DIC特色の出力仕様](docs/dic-cmyk-reference.md)と[東洋インキの特色対応](docs/toyo-spot-colors.md)を参照してください。
+
+## よくある質問・困ったとき
+
+### Illustratorをインストールする必要はありますか？
+
+通常の変換にIllustratorは不要です。同梱の特色データも、そのまま利用できます。
+
+### 変換後の文字を編集できますか？
+
+文字はアウトラインになり、形状として編集できます。文字列・フォントとしての再編集はできません。フォントや文字表現が未対応の場合は、ページが画像化されるか、画像化禁止設定でエラーになります。
+
+### 図形が画像になった場合はどうすればよいですか？
+
+書き出し前チェックやJSONログで未対応理由を確認してください。編集できるベクターが必要な場合は、元文書の未対応機能を変更するか、画像化禁止設定で出力を止めます。[対応機能と制限](docs/technical.md)に詳しい一覧があります。
+
+### Scribusで「変換用Pythonを見つけられない」と表示されます
+
+このREADMEの初回設定を、スクリプトと同じプロジェクトフォルダーで実行したか確認してください。Scribusの設定画面を使う場合は `".[scribus]"` のインストールが必要です。別のPython環境を使う設定は[Scribus連携の詳細](docs/technical.md)を参照してください。
+
+### 既存のAIファイルを上書きできますか？
+
+Scribusでは上書き確認が表示されます。CLIでは、上書きする場合だけ `--overwrite` を指定してください。保存先フォルダーは、実行前に作成しておきます。
+
+## 対応範囲と検証記録
+
+PDF2AIは対応範囲を検証しながら開発している変換ツールです。AIとして保存できることと、あらゆるPDF・Illustratorバージョン・印刷環境で完全に再現できることは別です。色、形状、文字のアウトライン、特色分版、画像化の有無を入稿前に確認してください。
+
+- [技術ガイド：CLI・対応機能・ファイル形式](docs/technical.md)
+- [Scribusの保存・キャンセル・復元処理](docs/scribus-export-safety.md)
+- [Illustrator出力との形式・描画比較](docs/ai-files-format-alignment.md)
+- [v1.0.0前の最終確認：自動テスト・配布物の検証](docs/release-v1.0.0-check.md)
