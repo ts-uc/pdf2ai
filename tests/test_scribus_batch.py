@@ -123,12 +123,13 @@ def test_preflight_uses_original_page_numbers_without_publishing(tmp_path,strict
 
 
 @pytest.mark.parametrize('action',['success','cancel','timeout','strict','cancel_at_publish'])
-def test_qt_session_drives_actual_workers_and_protects_output(tmp_path,action):
+@pytest.mark.parametrize('language',['ja','en'])
+def test_qt_session_drives_actual_workers_and_protects_output(tmp_path,action,language):
     pytest.importorskip('PySide6.QtWidgets')
     source=tmp_path/'input.pdf';source_pdf(source,unsupported=action=='strict')
     config=tmp_path/'request.json'
     config.write_text(json.dumps({'pdf':str(source),'pages':[3,7],'output':str(tmp_path/'日本語.ai'),
-                                 'overwrite':True,'write_report':True,'strict':action=='strict'}))
+                                 'overwrite':True,'write_report':True,'strict':action=='strict','language':language}))
     old=tmp_path/'日本語_003.ai';old.write_bytes(b'previous')
     code=r'''
 import json,sys

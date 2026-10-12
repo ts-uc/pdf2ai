@@ -75,7 +75,7 @@ def test_merge_inspection_checks_spot_conflict_and_cli(tmp_path,capsys):
     pdf.save(source)
     assert main([str(source),'--check','--combine'])==1
     rows=json.loads(capsys.readouterr().out)
-    assert all('特色' in row['combined_blocker'] for row in rows)
+    assert all('spot color' in row['combined_blocker'] for row in rows)
     assert not list(tmp_path.glob('*.ai'))
 
 

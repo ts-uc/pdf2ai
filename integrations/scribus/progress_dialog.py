@@ -1,5 +1,6 @@
 """Responsive progress and preflight dialogs exclusively for Scribus export."""
 import json
+from pdf2ai.i18n import tr, get_language, translator, use_language
 import codecs
 import os
 from pathlib import Path
@@ -12,34 +13,39 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QProgressBar,
 
 
 def build_preflight_dialog(summary):
+    with use_language(summary.get('language',get_language())):
+        return _build_preflight_dialog(summary)
+
+
+def _build_preflight_dialog(summary):
     dialog = QDialog()
-    dialog.setWindowTitle('AI書き出し：書き出し前チェック')
+    dialog.setWindowTitle(tr('AI書き出し：書き出し前チェック'))
     dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,True)
     dialog.setMinimumSize(600,400)
     layout = QVBoxLayout(dialog)
     unsupported = [r for r in summary['results'] if not r['native_supported']]
-    layout.addWidget(QLabel(f"対象 {len(summary['results'])}ページ／画像化が必要 {len(unsupported)}ページ"))
+    layout.addWidget(QLabel(tr('対象 {v0}ページ／画像化が必要 {v1}ページ', v0=len(summary['results']), v1=len(unsupported))))
     if unsupported:
-        layout.addWidget(QLabel('画像化したページでは文字・パス・特色・レイヤーの個別編集が失われます。',wordWrap=True))
+        layout.addWidget(QLabel(tr('画像化したページでは文字・パス・特色・レイヤーの個別編集が失われます。'),wordWrap=True))
     details = QPlainTextEdit()
     details.setObjectName('preflight_details')
     details.setReadOnly(True)
     lines = []
     for item in summary['results']:
-        lines.append(f"ページ{item['page']}："+('ベクター変換可能' if item['native_supported'] else '画像化が必要：'+item['first_blocker']))
+        lines.append(tr('ページ{v0}：', v0=item['page'])+(tr('ベクター変換可能') if item['native_supported'] else tr('画像化が必要：')+item['first_blocker']))
         lines.extend('  '+warning for warning in item.get('warnings',[]))
-    lines.extend('結合できません：'+reason for reason in dict.fromkeys(
+    lines.extend(tr('結合できません：')+reason for reason in dict.fromkeys(
         item['combined_blocker'] for item in summary['results'] if item.get('combined_blocker')))
-    lines.append('各ページの最初の未対応理由を表示します。'+
-        ('結合の配置・色空間・特色定義も検査済みです。' if summary.get('combined_constraints_checked') else ''))
+    lines.append(tr('各ページの最初の未対応理由を表示します。')+
+        (tr('結合の配置・色空間・特色定義も検査済みです。') if summary.get('combined_constraints_checked') else ''))
     details.setPlainText('\n'.join(lines))
     layout.addWidget(details)
     if not summary['can_export']:
-        layout.addWidget(QLabel('検査で書き出しを妨げる条件が見つかりました。上の詳細を確認してください。',wordWrap=True))
+        layout.addWidget(QLabel(tr('検査で書き出しを妨げる条件が見つかりました。上の詳細を確認してください。'),wordWrap=True))
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
-    buttons.button(QDialogButtonBox.StandardButton.Ok).setText('書き出し')
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr('書き出し'))
     buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(summary['can_export'])
-    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('キャンセル')
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr('キャンセル'))
     buttons.accepted.connect(dialog.accept)
     buttons.rejected.connect(dialog.reject)
     layout.addWidget(buttons)
@@ -53,6 +59,8 @@ class ExportSession(QDialog):
         super().__init__()
         self.request_path = Path(request_path)
         self.request = json.loads(self.request_path.read_text(encoding='utf-8'))
+        self.request.setdefault('language',get_language())
+        self.tr = translator(self.request['language'])
         self.approve = approve
         self.worker_script = str(worker_script)
         self.summary = None
@@ -69,18 +77,18 @@ class ExportSession(QDialog):
         minutes = self.request.get('timeout_minutes',0)
         if type(minutes) is not int or not 0<=minutes<=1440:raise ValueError('Invalid timeout')
         self.limit = minutes*60
-        self.setWindowTitle('Scribus：AI書き出し')
+        self.setWindowTitle(self.tr('Scribus：AI書き出し'))
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,True)
         self.setMinimumWidth(540)
         layout = QVBoxLayout(self)
-        self.label = QLabel('書き出し前チェックを開始します。')
+        self.label = QLabel(self.tr('書き出し前チェックを開始します。'))
         self.label.setObjectName('export_status')
         self.label.setWordWrap(True)
         layout.addWidget(self.label)
         self.progress = QProgressBar()
         self.progress.setRange(0,len(self.request['pages']))
         layout.addWidget(self.progress)
-        self.cancel_button = QPushButton('キャンセル')
+        self.cancel_button = QPushButton(self.tr('キャンセル'))
         self.cancel_button.clicked.connect(self.cancel)
         layout.addWidget(self.cancel_button)
         self.process = QProcess(self)
@@ -116,14 +124,14 @@ class ExportSession(QDialog):
             phase = event['phase']
             self.progress.setValue(event.get('current',0))
             if phase=='inspect':
-                self.label.setText(f"書き出し前チェック：{event['current']}/{event['total']}ページ")
+                self.label.setText(self.tr('書き出し前チェック：{v0}/{v1}ページ', v0=event['current'], v1=event['total']))
             elif phase=='convert':
-                self.label.setText(f"変換中：{event['current']}/{event['total']}ページ（出力AIはまだ保存していません）")
+                self.label.setText(self.tr('変換中：{v0}/{v1}ページ（出力AIはまだ保存していません）', v0=event['current'], v1=event['total']))
             elif phase=='ready_to_publish':
                 self.publishing = True
                 self.cancel_button.setEnabled(False)
                 self.timer.stop()
-                self.label.setText('出力ファイルを保存しています。保存・復元の完了を待っています。')
+                self.label.setText(self.tr('出力ファイルを保存しています。保存・復元の完了を待っています。'))
                 try:
                     temporary = self.permission.with_suffix('.ready')
                     temporary.write_bytes(b'commit')
@@ -142,7 +150,7 @@ class ExportSession(QDialog):
         self.cancelled = True
         self.timer.stop()
         self.cancel_button.setEnabled(False)
-        self.label.setText('変換を停止しています。AIは公開しません。')
+        self.label.setText(self.tr('変換を停止しています。AIは公開しません。'))
         if self.process.state()!=QProcess.ProcessState.NotRunning:self.process.kill()
         else:self.worker_finished(-1,QProcess.ExitStatus.CrashExit)
 
@@ -169,7 +177,7 @@ class ExportSession(QDialog):
             if needs_confirmation:
                 allowed = self.approve(summary) if self.approve is not None else build_preflight_dialog(summary).exec()==QDialog.DialogCode.Accepted
             if allowed and summary['can_export']:
-                self.label.setText('変換を開始します。')
+                self.label.setText(self.tr('変換を開始します。'))
                 self.start('worker')
                 return
             self.summary = {'committed':False,'cancelled':True,'preflight_rejected':True,'results':[],'inspection':summary}
@@ -180,6 +188,9 @@ class ExportSession(QDialog):
 def run_export_session(request_path,worker_script):
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(['pdf2ai-scribus-export'])
+    from qt_language import configure_qt_language
+    request=json.loads(Path(request_path).read_text(encoding='utf-8'))
+    configure_qt_language(app,request.get('language',get_language()))
     session = ExportSession(request_path,worker_script)
     QTimer.singleShot(0,session.start)
     session.exec()

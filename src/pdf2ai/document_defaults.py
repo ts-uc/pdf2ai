@@ -5,6 +5,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 import pikepdf
+from .i18n import tr
 from fontTools.pens.boundsPen import BoundsPen
 
 from .vector import Color, GroupBoundary, PaintedPath, Raster
@@ -241,7 +242,7 @@ def set_structured_metadata(pdf, drawings, meta, *, artboard_boxes=None):
             value(plates, 'rdf', 'li', name)
         groups = ET.SubElement(replace('xmpTPg', 'SwatchGroups'), tag('rdf', 'Seq'))
         group = resource(ET.SubElement(groups, tag('rdf', 'li')))
-        value(group, 'xmpG', 'groupName', '初期設定のスウォッチグループ')
+        value(group, 'xmpG', 'groupName', tr('初期設定のスウォッチグループ'))
         value(group, 'xmpG', 'groupType', 0)
         colors = ET.SubElement(ET.SubElement(group, tag('xmpG', 'Colorants')), tag('rdf', 'Seq'))
         for spot in spots.values():

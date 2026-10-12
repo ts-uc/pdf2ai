@@ -17,8 +17,27 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'src'))
+from pdf2ai.i18n import tr, set_language, get_language, normalize_language, translator, use_language
+from functools import wraps
 RASTER_DPI = 300
 STRICT = False
+
+
+def scribus_language(scribus):
+    """Use Scribus's UI preference, independent of the system locale."""
+    try:
+        return normalize_language(scribus.getGuiLanguage())
+    except (AttributeError,RuntimeError):
+        return 'en'
+
+
+def request_language(function):
+    @wraps(function)
+    def wrapped(request,*args,**kwargs):
+        with use_language(request.get('language',get_language())):
+            return function(request,*args,**kwargs)
+    return wrapped
 
 
 def parse_pages(value, count, current):
@@ -35,25 +54,25 @@ def parse_pages(value, count, current):
         elif len(bounds) == 2:
             start, end = map(int, bounds)
         else:
-            raise ValueError('ページ番号は all / current / 1,3-5 の形式で入力してください。')
+            raise ValueError(tr('ページ番号は all / current / 1,3-5 の形式で入力してください。'))
         if not 1 <= start <= end <= count:
-            raise ValueError('ページ番号は1〜{}の範囲で入力してください。'.format(count))
+            raise ValueError(tr('ページ番号は1〜{}の範囲で入力してください。').format(count))
         selected.update(range(start, end + 1))
     if not selected:
-        raise ValueError('対象ページを指定してください。')
+        raise ValueError(tr('対象ページを指定してください。'))
     return sorted(selected)
 
 
 def output_paths(base, pages, output_mode='separate'):
     if output_mode not in ('combined', 'separate'):
-        raise ValueError('書き出し方法は combined / separate のいずれかを指定してください。')
+        raise ValueError(tr('書き出し方法は combined / separate のいずれかを指定してください。'))
     base = Path(base)
     if not base.suffix:
         base = base.with_suffix('.ai')
     if base.suffix.lower() != '.ai':
-        raise ValueError('出力ファイルの拡張子は .ai にしてください。')
+        raise ValueError(tr('出力ファイルの拡張子は .ai にしてください。'))
     if not base.parent.is_dir():
-        raise ValueError('出力先フォルダーが存在しません。')
+        raise ValueError(tr('出力先フォルダーが存在しません。'))
     outputs = [base] if len(pages) == 1 or output_mode == 'combined' else [base.with_name('{}_{:03d}.ai'.format(base.stem, p)) for p in pages]
     return outputs, base.with_suffix('.report.json')
 
@@ -94,7 +113,7 @@ def find_python():
                 return candidate
         except (OSError, subprocess.TimeoutExpired):
             pass
-    raise RuntimeError('変換用Pythonまたは設定画面のパッケージを見つけられません。READMEの手順でプロジェクト内に.venvを作成し、pip install ".[scribus]"を実行してください。別の環境を使う場合はPDF2AI_PYTHONにPython実行ファイルのパスを設定してください。')
+    raise RuntimeError(tr('変換用Pythonまたは設定画面のパッケージを見つけられません。READMEの手順でプロジェクト内に.venvを作成し、pip install ".[scribus]"を実行してください。別の環境を使う場合はPDF2AI_PYTHONにPython実行ファイルのパスを設定してください。'))
 
 
 def default_output(document):
@@ -107,86 +126,91 @@ def default_output(document):
     return directory / path.with_suffix('.ai').name
 
 
-def build_export_dialog(document, count, current):
+def build_export_dialog(document, count, current, language=None):
+    ui_language = normalize_language(language) if language is not None else get_language()
+    tr = translator(ui_language)
     # Run Qt in the external Python process, independently of Scribus's Qt.
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                   QLineEdit, QCheckBox, QComboBox, QPushButton,
                                   QDialogButtonBox, QFileDialog, QMessageBox, QSpinBox)
     dialog = QDialog()
-    dialog.setWindowTitle('AI書き出し')
+    dialog.setWindowTitle(tr('AI書き出し'))
     dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
     dialog.setMinimumWidth(540)
     dialog.export_options = None
     layout = QVBoxLayout(dialog)
-    layout.addWidget(QLabel('対象ページ：all（全ページ） / current（現在） / 例：1,3-5'))
+    layout.addWidget(QLabel(tr('対象ページ：all（全ページ） / current（現在） / 例：1,3-5')))
     pages = QLineEdit('all')
     pages.setObjectName('pages')
     layout.addWidget(pages)
-    layout.addWidget(QLabel('書き出し方法'))
+    layout.addWidget(QLabel(tr('書き出し方法')))
     output_mode = QComboBox()
     output_mode.setObjectName('output_mode')
-    output_mode.addItem('ページ別のAIファイル', 'separate')
-    output_mode.addItem('対象ページを1つのAIファイルにまとめる', 'combined')
+    output_mode.addItem(tr('ページ別のAIファイル'), 'separate')
+    output_mode.addItem(tr('対象ページを1つのAIファイルにまとめる'), 'combined')
     layout.addWidget(output_mode)
-    layout.addWidget(QLabel('保存先'))
+    layout.addWidget(QLabel(tr('保存先')))
     row = QHBoxLayout()
     destination = QLineEdit(str(default_output(document)))
     destination.setObjectName('output')
     row.addWidget(destination)
-    browse = QPushButton('参照…')
+    browse = QPushButton(tr('参照…'))
     row.addWidget(browse)
     layout.addLayout(row)
-    report = QCheckBox('JSONログを出力する')
+    report = QCheckBox(tr('JSONログを出力する'))
     report.setObjectName('write_report')
     report.setChecked(False)
     layout.addWidget(report)
-    strict = QCheckBox('未対応機能があれば画像化せずエラーにする')
+    strict = QCheckBox(tr('未対応機能があれば画像化せずエラーにする'))
     strict.setObjectName('strict')
     strict.setChecked(STRICT)
     layout.addWidget(strict)
-    layout.addWidget(QLabel('画像化する場合の解像度（dpi）'))
+    layout.addWidget(QLabel(tr('画像化する場合の解像度（dpi）')))
     dpi = QSpinBox()
     dpi.setObjectName('raster_dpi')
     dpi.setRange(72, 1200)
     dpi.setValue(int(RASTER_DPI))
     layout.addWidget(dpi)
-    layout.addWidget(QLabel('検査・変換の制限時間（各処理／分。0は制限なし）'))
+    layout.addWidget(QLabel(tr('検査・変換の制限時間（各処理／分。0は制限なし）')))
     timeout = QSpinBox()
     timeout.setObjectName('timeout_minutes')
     timeout.setRange(0,1440)
     layout.addWidget(timeout)
-    bleeds = QCheckBox('文書の裁ち落としを含める')
+    bleeds = QCheckBox(tr('文書の裁ち落としを含める'))
     bleeds.setObjectName('bleeds')
     layout.addWidget(bleeds)
-    marks = QCheckBox('トンボを付ける')
+    marks = QCheckBox(tr('トンボを付ける'))
     marks.setObjectName('crop_marks')
     layout.addWidget(marks)
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-    buttons.button(QDialogButtonBox.StandardButton.Ok).setText('書き出し')
-    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('キャンセル')
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr('書き出し'))
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr('キャンセル'))
+    buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr('キャンセル'))
     layout.addWidget(buttons)
 
     def choose_file():
-        chosen, _ = QFileDialog.getSaveFileName(dialog, 'AI書き出し：保存先', destination.text(), 'Illustrator (*.ai)',
-                                              options=QFileDialog.Option.DontConfirmOverwrite)
+        chosen, _ = QFileDialog.getSaveFileName(dialog, tr('AI書き出し：保存先'), destination.text(), 'Illustrator (*.ai)',
+                                              options=QFileDialog.Option.DontConfirmOverwrite | QFileDialog.Option.DontUseNativeDialog)
         if chosen:
             destination.setText(chosen)
 
     def accept():
         try:
-            selected = parse_pages(pages.text(), count, current)
-            chosen = destination.text().strip()
-            if not chosen:
-                raise ValueError('保存先を指定してください。')
-            output_paths(chosen, selected, output_mode.currentData())
+            with use_language(ui_language):
+                selected = parse_pages(pages.text(), count, current)
+                chosen = destination.text().strip()
+                if not chosen:
+                    raise ValueError(tr('保存先を指定してください。'))
+                output_paths(chosen, selected, output_mode.currentData())
         except ValueError as error:
-            QMessageBox.warning(dialog, 'AI書き出し', str(error))
+            QMessageBox.warning(dialog, tr('AI書き出し'), str(error))
             return
         dialog.export_options = {'pages': selected, 'output': chosen, 'write_report': report.isChecked(),
                                  'output_mode': output_mode.currentData(), 'strict': strict.isChecked(),
                                  'dpi': dpi.value(), 'bleeds': bleeds.isChecked(), 'crop_marks': marks.isChecked(),
-                                 'timeout_minutes': timeout.value()}
+                                 'timeout_minutes': timeout.value(),
+                                 'language':ui_language}
         dialog.accept()
 
     browse.clicked.connect(choose_file)
@@ -195,10 +219,12 @@ def build_export_dialog(document, count, current):
     return dialog
 
 
-def export_dialog(document, count, current):
+def export_dialog(document, count, current, language=None):
     from PySide6.QtWidgets import QApplication, QDialog
     app = QApplication.instance() or QApplication(['pdf2ai-scribus'])
-    dialog = build_export_dialog(document, count, current)
+    from qt_language import configure_qt_language
+    configure_qt_language(app,language if language is not None else get_language())
+    dialog = build_export_dialog(document, count, current, language)
     return dialog.export_options if dialog.exec() == QDialog.DialogCode.Accepted else None
 
 
@@ -220,7 +246,7 @@ def export_pdf(scribus, path, pages, options=None):
         setattr(pdf, name, value)
     pdf.save()
     if not Path(path).is_file() or not Path(path).stat().st_size:
-        raise RuntimeError('ScribusのPDF書き出しが完了しませんでした。')
+        raise RuntimeError(tr('ScribusのPDF書き出しが完了しませんでした。'))
 
 
 def export_pdf_monitored(scribus,path,pages,options,python):
@@ -229,6 +255,7 @@ def export_pdf_monitored(scribus,path,pages,options,python):
     directory=Path(path).parent
     control={name:str(directory/('pdf-progress-'+name)) for name in ('ready','cancel','done')}
     control['timeout_minutes']=options.get('timeout_minutes',0)
+    control['language']=options.get('language',get_language())
     request=directory/'pdf-progress.json'
     request.write_text(json.dumps(control),encoding='utf-8')
     launch={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
@@ -239,11 +266,11 @@ def export_pdf_monitored(scribus,path,pages,options,python):
     try:
         while not Path(control['ready']).exists():
             if process.poll() is not None or time.monotonic()-started>15:
-                raise RuntimeError('PDF作成の進捗画面を開始できませんでした。')
+                raise RuntimeError(tr('PDF作成の進捗画面を開始できませんでした。'))
             time.sleep(.02)
         if not Path(control['cancel']).exists():export_pdf(scribus,path,pages,options)
         if process.poll() is not None:
-            raise RuntimeError('PDF作成の進捗画面が終了しました。AI変換は開始していません。')
+            raise RuntimeError(tr('PDF作成の進捗画面が終了しました。AI変換は開始していません。'))
         timeout=float(control['timeout_minutes'])*60
         timed_out=bool(timeout and time.monotonic()-started>=timeout)
         cancel=Path(control['cancel'])
@@ -275,21 +302,22 @@ def prepare_request(request):
     outputs, report_path = output_paths(request['output'], pages, output_mode)
     destinations = outputs + ([report_path] if request.get('write_report', False) else [])
     if any(path.is_dir() for path in destinations):
-        raise ValueError('出力先がファイルではなくフォルダーです。保存先を変更してください。')
+        raise ValueError(tr('出力先がファイルではなくフォルダーです。保存先を変更してください。'))
     if not request.get('overwrite', False):
         existing = [path for path in destinations if os.path.lexists(path)]
         if existing:
-            raise FileExistsError('出力が既に存在します: ' + ', '.join(path.name for path in existing))
+            raise FileExistsError(tr('出力が既に存在します: ') + ', '.join(path.name for path in existing))
     from pdf2ai.path_conflicts import paths_conflict
     if any(paths_conflict(source, path) for path in destinations):
         raise ValueError('Input/output path conflict')
     with pikepdf.open(source) as pdf:
         if pdf.is_encrypted:raise ValueError('Encrypted PDFs are unsupported')
         if len(pdf.pages) != len(pages):
-            raise ValueError('ScribusのPDFページ数が対象ページ数と一致しません。')
+            raise ValueError(tr('ScribusのPDFページ数が対象ページ数と一致しません。'))
     return source,pages,dpi,output_mode,outputs,report_path
 
 
+@request_language
 def inspect_export(request, emit=lambda event: None):
     source,pages,dpi,mode,outputs,report_path = prepare_request(request)
     from pdf2ai.preflight import inspect_document, inspect_combination
@@ -304,7 +332,7 @@ def inspect_export(request, emit=lambda event: None):
             progress=lambda number,done,total: emit({'phase':'inspect','current':done,'total':total,'page':pages[number-1]}))
         for item,page in zip(results,pages):item['page'] = page
     emit({'phase':'inspect','current':len(pages),'total':len(pages)})
-    return {'inspection_only':True,'results':results,
+    return {'inspection_only':True,'results':results,'language':get_language(),
             'strict':bool(request.get('strict',STRICT)),
             'can_export':not any(r.get('combined_blocker') for r in results) and
                 (not request.get('strict',STRICT) or all(r['native_supported'] for r in results)),
@@ -318,18 +346,19 @@ def wait_for_publication(request, emit, total):
         emit({'phase':'ready_to_publish','current':total,'total':total})
         deadline = time.monotonic()+60
         while not Path(permit).exists():
-            if time.monotonic()>deadline:raise RuntimeError('出力公開の確認を受け取れませんでした。AIは公開していません。')
+            if time.monotonic()>deadline:raise RuntimeError(tr('出力公開の確認を受け取れませんでした。AIは公開していません。'))
             time.sleep(.02)
     else:emit({'phase':'publish','current':total,'total':total})
 
 
+@request_language
 def convert_export(request, emit=lambda event: None):
     source,pages,dpi,mode,outputs,report_path = prepare_request(request)
     from pdf2ai.native import convert
     from pdf2ai.batch_publish import publish_batch
     results = []
     summary = {'document':request.get('document','Scribus document'),
-               'output_mode':mode,'results':results,'committed':False}
+               'output_mode':mode,'results':results,'committed':False,'language':get_language()}
     with tempfile.TemporaryDirectory(prefix='.pdf2ai-batch-',dir=request.get('work_dir',outputs[0].parent)) as directory:
         staging = Path(directory)
         staged = [staging/p.name for p in outputs]
@@ -378,16 +407,22 @@ def convert_export(request, emit=lambda event: None):
 
 
 def scribus_main(scribus):
+    with use_language(scribus_language(scribus)):
+        return _scribus_main(scribus)
+
+
+def _scribus_main(scribus):
     if not scribus.haveDoc():
-        scribus.messageBox('AI書き出し', '書き出す文書を開いてください。', scribus.ICON_WARNING)
+        scribus.messageBox(tr('AI書き出し'), tr('書き出す文書を開いてください。'), scribus.ICON_WARNING)
         return
     python = find_python()
     document_name = scribus.getDocName() or ''
     document = Path(document_name or 'document.sla')
     selection = run_child([python, str(Path(__file__).resolve()), '--dialog', '--document', document_name,
-                           '--count', str(scribus.pageCount()), '--current', str(scribus.currentPage())])
+                           '--count', str(scribus.pageCount()), '--current', str(scribus.currentPage()),
+                           '--language',get_language()])
     if selection.returncode != 0:
-        raise RuntimeError((selection.stderr or '設定画面を開始できませんでした。').strip()[-2000:])
+        raise RuntimeError((selection.stderr or tr('設定画面を開始できませんでした。')).strip()[-2000:])
     options = json.loads(selection.stdout)
     if options is None:
         return
@@ -398,12 +433,12 @@ def scribus_main(scribus):
     existing = [p for p in outputs + ([report_path] if write_report else []) if p.exists()]
     overwrite = False
     if existing:
-        answer = scribus.messageBox('AI書き出し：上書き', '{}件の既存ファイルを上書きしますか？\n{}'.format(len(existing), '\n'.join(p.name for p in existing[:8])),
+        answer = scribus.messageBox(tr('AI書き出し：上書き'), tr('{}件の既存ファイルを上書きしますか？\n{}').format(len(existing), '\n'.join(p.name for p in existing[:8])),
                                     scribus.ICON_WARNING, scribus.BUTTON_NO | scribus.BUTTON_DEFAULT, scribus.BUTTON_YES)
         if answer != scribus.BUTTON_YES:
             return
         overwrite = True
-    scribus.statusMessage('AI書き出し：PDFを作成しています…')
+    scribus.statusMessage(tr('AI書き出し：PDFを作成しています…'))
     scribus.progressReset()
     scribus.progressTotal(2)
     try:
@@ -412,40 +447,40 @@ def scribus_main(scribus):
             pdf = directory / 'document.pdf'
             pdf_status=export_pdf_monitored(scribus,pdf,pages,options,python)
             if pdf_status['cancelled']:
-                scribus.messageBox('AI書き出し','PDF作成が制限時間を超えたため中止しました。AIは保存していません。' if pdf_status['timed_out'] else 'PDF作成後に中止しました。AIは保存していません。',scribus.ICON_INFORMATION)
+                scribus.messageBox(tr('AI書き出し'),tr('PDF作成が制限時間を超えたため中止しました。AIは保存していません。') if pdf_status['timed_out'] else tr('PDF作成後に中止しました。AIは保存していません。'),scribus.ICON_INFORMATION)
                 return
             request = {'pdf': str(pdf), 'pages': pages, 'output': str(Path(chosen)),
                        'overwrite': overwrite, 'strict': options.get('strict', STRICT),
                        'dpi': options.get('dpi', RASTER_DPI), 'document': document.name,
                        'write_report': write_report, 'output_mode': output_mode,
-                       'timeout_minutes':options.get('timeout_minutes',0)}
+                       'timeout_minutes':options.get('timeout_minutes',0),'language':get_language()}
             request_path = directory / 'request.json'
             request_path.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
             scribus.progressSet(1)
-            scribus.statusMessage('AI書き出し：{}ページを変換しています…'.format(len(pages)))
+            scribus.statusMessage(tr('AI書き出し：{}ページを変換しています…').format(len(pages)))
             result = run_child([python, str(Path(__file__).resolve()), '--export-session', str(request_path)])
             if result.returncode not in (0, 1):
-                raise RuntimeError((result.stderr or result.stdout or '変換処理を開始できませんでした。').strip()[-2000:])
+                raise RuntimeError((result.stderr or result.stdout or tr('変換処理を開始できませんでした。')).strip()[-2000:])
             summary = json.loads(result.stdout)
         if summary.get('cancelled'):
-            scribus.messageBox('AI書き出し','制限時間を超えたため停止しました。AIは公開していません。' if summary.get('timed_out') else '書き出しをキャンセルしました。AIは公開していません。',scribus.ICON_INFORMATION)
+            scribus.messageBox(tr('AI書き出し'),tr('制限時間を超えたため停止しました。AIは公開していません。') if summary.get('timed_out') else tr('書き出しをキャンセルしました。AIは公開していません。'),scribus.ICON_INFORMATION)
             return
         if summary.get('error'):raise RuntimeError(summary['error'])
         errors = [r for r in summary['results'] if 'error' in r]
         rasterized = [r for r in summary['results'] if r.get('rasterized')]
         saved = len(pages) if summary.get('committed') else 0
-        lines = ['保存：{} / 保存済み{}ページ'.format(outputs[0].parent,saved)]
-        if not summary.get('committed'):lines.append('一部の変換に失敗したため、AIは一式を公開していません。既存AIを保持します。')
-        lines.append('書き出し方法：' + ('1つのAIファイル（' + outputs[0].name + '）' if output_mode == 'combined' else 'ページ別のAIファイル'))
+        lines = [tr('保存：{} / 保存済み{}ページ').format(outputs[0].parent,saved)]
+        if not summary.get('committed'):lines.append(tr('一部の変換に失敗したため、AIは一式を公開していません。既存AIを保持します。'))
+        lines.append(tr('書き出し方法：') + (tr('1つのAIファイル（{v0}）',v0=outputs[0].name) if output_mode == 'combined' else tr('ページ別のAIファイル')))
         if write_report:
-            lines.append('レポート：' + report_path.name)
+            lines.append(tr('レポート：') + report_path.name)
         if rasterized:
-            lines += ['画像化したページ：' + ', '.join(str(r['page']) for r in rasterized),
-                      '画像化したページは文字・パス・特色・レイヤーを個別に再編集できません。']
-            lines += ['ページ{}：{}'.format(r['page'], r['fallback_reason']) for r in rasterized[:5]]
-        lines += ['ページ{}：{}'.format(r['page'], r['error']) for r in errors[:5]]
+            lines += [tr('画像化したページ：') + ', '.join(str(r['page']) for r in rasterized),
+                      tr('画像化したページは文字・パス・特色・レイヤーを個別に再編集できません。')]
+            lines += [tr('ページ{}：{}').format(r['page'], r['fallback_reason']) for r in rasterized[:5]]
+        lines += [tr('ページ{}：{}').format(r['page'], r['error']) for r in errors[:5]]
         scribus.progressSet(2)
-        scribus.messageBox('AI書き出し', '\n'.join(lines), scribus.ICON_WARNING if errors or rasterized else scribus.ICON_INFORMATION)
+        scribus.messageBox(tr('AI書き出し'), '\n'.join(lines), scribus.ICON_WARNING if errors or rasterized else scribus.ICON_INFORMATION)
     finally:
         scribus.progressReset()
         scribus.statusMessage('')
@@ -464,7 +499,9 @@ def main():
         parser.add_argument('--document', default='')
         parser.add_argument('--count', type=int)
         parser.add_argument('--current', type=int)
+        parser.add_argument('--language',choices=('en','ja'),default='en')
         args = parser.parse_args()
+        set_language(args.language)
         try:
             sys.path.insert(0, str(ROOT / 'src'))
             from pdf2ai.native import convert
@@ -477,7 +514,7 @@ def main():
                 run(args.pdf_progress)
                 return 0
             if args.dialog:
-                print(json.dumps(export_dialog(args.document, args.count, args.current), ensure_ascii=False))
+                print(json.dumps(export_dialog(args.document, args.count, args.current, args.language), ensure_ascii=False))
                 return 0
             if args.export_session:
                 from progress_dialog import run_export_session
@@ -496,13 +533,15 @@ def main():
     try:
         import scribus
     except ImportError:
-        print('このスクリプトはScribusの「スクリプトを実行」から起動してください。', file=sys.stderr)
+        set_language('en')
+        print(tr('このスクリプトはScribusの「スクリプトを実行」から起動してください。'), file=sys.stderr)
         return 2
-    try:
-        scribus_main(scribus)
-    except Exception as error:
-        scribus.messageBox('AI書き出し：エラー', str(error), scribus.ICON_CRITICAL)
-        return 1
+    with use_language(scribus_language(scribus)):
+        try:
+            scribus_main(scribus)
+        except Exception as error:
+            scribus.messageBox(tr('AI書き出し：エラー'), str(error), scribus.ICON_CRITICAL)
+            return 1
     return 0
 
 

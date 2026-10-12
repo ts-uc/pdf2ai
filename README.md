@@ -1,164 +1,199 @@
-# PDF2AI：Scribus・PDFからIllustratorのAIファイルへ変換
+# PDF2AI: Convert Scribus Documents and PDFs to Illustrator AI Files
 
-**PDF2AIは、Scribus文書やPDFをAdobe Illustrator CC2020形式のAIファイルへ書き出すツールです。** 変換時にIllustratorは不要です。対応する図形は編集できるベクターとして出力し、DIC・東洋インキ（TOYO）の特色にも対応しています。
+**PDF2AI exports Scribus documents and PDF files as Adobe Illustrator CC2020-compatible AI files without requiring Illustrator for conversion.** Supported artwork remains editable as vector paths, with support for multiple artboards, layers, images, gradients, and DIC / TOYO spot colors.
 
-Scribusからは設定画面で書き出せます。既存のPDFは、ターミナルからコマンドを実行して変換します。Windows・macOS・GNU/Linux向けに提供しています。現在のバージョンは **1.0.0** です。
+Use the export dialog from Scribus, or convert an existing PDF from the command line. PDF2AI supports Windows, macOS, and GNU/Linux. The current version is **1.1.0**.
 
-PDF2AI converts Scribus documents and PDF files to Adobe Illustrator CC2020 AI files without requiring Illustrator for conversion. It supports editable vector paths, multiple artboards, and DIC / TOYO spot colors. Text is outlined; unsupported pages are rasterized unless strict mode is enabled.
+> Text becomes outlines, so it cannot be edited as text. Pages containing unsupported features are rasterized by default. Use strict mode if you need to retain editable vectors or spot separations. Check the output before submitting artwork for production.
 
-> 文字はアウトラインになり、文字としての再編集はできません。未対応機能を含むページは、初期設定ではページ全体を画像に変換します。対応範囲には制限があるため、入稿前に出力内容を確認してください。
+## What PDF2AI Does
 
-## PDF2AIでできること
+- **Export AI from Scribus:** choose pages, an output filename, and the export mode in a dialog.
+- **Convert PDF to AI:** import supported paths, images, gradients, and layers.
+- **Export multiple pages:** save separate AI files or combine pages as artboards in one AI file.
+- **Preserve DIC and TOYO spot colors:** keep spot names and fill/stroke tints on vector-converted pages.
+- **Check before exporting:** inspect vector support, reject raster fallback, and optionally save a JSON report.
 
-- **ScribusからAIを書き出す**：対象ページ・保存先・書き出し方法を画面で選択できます。
-- **PDFをAIへ変換する**：対応するパス・画像・グラデーション・レイヤーを取り込みます。
-- **複数ページを扱う**：ページ別のAIに保存するか、一つのAIの複数アートボードにまとめられます。
-- **DIC・TOYOの特色を保持する**：ベクター変換できるページでは、特色名と塗り・線の濃度を保持します。
-- **書き出し前に確認する**：ベクター対応可否の検査、画像化を禁止する設定、JSONログの出力に対応しています。
+PDF2AIは、Illustratorを使わずにScribus文書やPDFをAIファイルへ変換するツールです。DIC・東洋インキの特色や、複数ページの書き出しに対応しています。詳しい説明は[日本語ガイド（README_ja.md）](README_ja.md)をご覧ください。
 
-## 動作環境
+## Requirements
 
-| 用途 | 必要なもの |
-| --- | --- |
-| PDFを直接変換 | Python 3.10以降 |
-| Scribusから書き出し | Python 3.10以降と、Scripterが有効なScribus 1.6以降 |
-| 追加の文字アウトライン前処理 | Ghostscript。通常の変換には必須ではありません |
+| Use                         | Requirements                                                        |
+| --------------------------- | ------------------------------------------------------------------- |
+| Convert an existing PDF     | Python 3.10 or later                                                |
+| Export from Scribus         | Python 3.10 or later and Scribus 1.6 or later with Scripter enabled |
+| Optional text preprocessing | Ghostscript; not required for normal conversion                     |
 
-必要なPythonパッケージは、次のインストール手順でまとめて導入できます。出力形式はIllustrator CC2020を対象にしています。別のIllustratorバージョンや制作・印刷環境での結果は、実際の出力で確認してください。
+The installation commands below install the required Python packages. The target AI format is Illustrator CC2020. Compatibility with other Illustrator versions and production environments should be checked using your actual output.
 
-## インストール：初回だけの準備
+## Installation
 
-リポジトリをダウンロードして展開し、**このREADMEがあるフォルダー**でターミナルを開いてください。OSに合わせて、次の2行を実行します。
+Download and extract the repository. Open a terminal **in the folder containing this README**, then run the commands for your operating system. This setup is only needed once.
 
-### Windows（PowerShell）
+### Windows — PowerShell
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install ".[scribus]"
 ```
 
-### macOS・GNU/Linux
+### macOS / GNU/Linux
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install ".[scribus]"
 ```
 
-この手順で、変換処理とScribusの設定画面に必要なパッケージが入ります。**PDFのコマンドライン変換だけを使う場合は、2行目の `".[scribus]"` を `"."` に置き換えられます。**
+These commands install the converter and Scribus export dialogs. **For command-line PDF conversion only, replace `".[scribus]"` with `"."` in the second command.**
 
-準備が終わったら、以下のどちらかの方法で変換してください。Scribus連携を使う場合は、ダウンロードしたフォルダーの構成を保ち、スクリプトを元の場所から実行します。
+Keep the project folder together. Run the Scribus script from its original location so it can find the converter, dialogs, and palettes.
 
-## ScribusからIllustrator形式のAIを書き出す
+## Export AI from Scribus
 
-1. 書き出したい文書をScribusで開きます。
-2. **スクリプト → スクリプトを実行**（Script → Execute Script）から、[`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py) を選びます。
-3. **対象ページ**を指定します。全ページは `all`、現在のページは `current`、範囲指定は `1,3-5` のように入力します。
-4. **書き出し方法**と**保存先**を選び、**書き出し**を押します。
-5. 書き出し前チェックで警告が出た場合は、内容を確認して進めます。警告がなければ、そのまま変換が始まります。
+1. Open the document you want to export in Scribus.
+2. Choose **Script → Execute Script** and select [`integrations/scribus/export_ai.py`](integrations/scribus/export_ai.py).
+3. Set **Pages**: `all` for every page, `current` for the current page, or a range such as `1,3-5`.
+4. Select the **Export mode** and output filename, then click **Export**.
+5. If preflight shows warnings, review them before proceeding. Export starts automatically when no confirmation is needed.
 
-### ページ別出力と複数アートボードの違い
+### Interface Language
 
-| 書き出し方法 | 出力結果 |
-| --- | --- |
-| ページ別のAIファイル（初期設定） | 各ページを別のAIに保存。複数ページなら `design_001.ai` など、元のページ番号が付きます |
-| 対象ページを1つのAIファイルにまとめる | 選択したページを独立したアートボードとして、一つの `design.ai` に保存します |
+The export dialogs follow **Scribus's interface language**:
 
-ベクターの編集性を優先する場合は、**未対応機能があれば画像化せずエラーにする**を有効にしてください。未対応ページがあると、画像化して書き出す代わりに停止します。
+- Japanese Scribus interface: Japanese export settings, progress, warnings, and completion messages.
+- Any other Scribus interface language: English export settings, progress, warnings, and completion messages.
 
-設定画面では、画像化する場合の解像度、JSONログ、制限時間、裁ち落とし、トンボも指定できます。PDF作成・検査・変換の進捗画面からキャンセルできますが、ScribusのPDF作成中は完了待ちになります。
+This uses the Scribus preference, not the operating system's language. The selected language is passed to the PDF progress window and conversion workers. Your document text, layer names, filenames, and spot color names are retained; generated default names follow the selected language.
 
-全ページの変換が成功してから、AIを一式保存します。途中の変換失敗やキャンセルでは既存AIを保持し、保存中の通常のエラーでは元のファイルへ復元します。保存・復元中はキャンセルできません。詳しくは[Scribus書き出しの保存・キャンセル仕様](docs/scribus-export-safety.md)を参照してください。
+### Separate Files or Multiple Artboards
 
-## PDFをAIファイルへ変換する（コマンドライン）
+| Export mode                             | Output                                                                                |
+| --------------------------------------- | ------------------------------------------------------------------------------------- |
+| Separate AI files per page — default    | One AI per page. Multipage exports use original page numbers, such as `design_001.ai` |
+| Combine selected pages into one AI file | One `design.ai` containing an independent artboard for each selected page             |
 
-インストール後、このREADMEがあるフォルダーで実行します。`input.pdf` を入力PDF、`output.ai` を保存先に置き換えてください。パスに空白がある場合は、`"My Design.pdf"` のように引用符で囲みます。
+Enable **Fail on unsupported features instead of rasterizing** when editable paths or spot separations are required. An unsupported page then stops the export instead of becoming an image.
 
-### Windows（PowerShell）
+The dialog also provides rasterization resolution, JSON reporting, time limits, document bleeds, and crop marks. Progress windows accept cancellation during PDF creation, preflight, and conversion. Scribus's synchronous PDF export must finish before a cancellation request takes effect.
+
+AI files are published only after every selected page converts successfully. Conversion failure or cancellation keeps existing AI files. Ordinary publication failures trigger restoration from backups. Cancellation is disabled during publication and recovery. See the [Scribus export and recovery record](docs/scribus-export-safety.md) for implementation details and verification scope; that record is in Japanese.
+
+## Convert PDF to AI from the Command Line
+
+Run these commands from the project folder. Replace `input.pdf` and `output.ai` with your filenames. Quote paths containing spaces, for example `"My Design.pdf"`. Create the destination directory before conversion.
+
+### Windows — PowerShell
 
 ```powershell
 .\.venv\Scripts\python.exe run_pdf2ai.py input.pdf -o output.ai
 ```
 
-### macOS・GNU/Linux
+### macOS / GNU/Linux
 
 ```sh
 .venv/bin/python run_pdf2ai.py input.pdf -o output.ai
 ```
 
-上のコマンドは1ページのPDF用です。複数ページのPDFでは、次のオプションで対象と保存方法を指定します。オプションはWindowsでも共通です。
+The basic command converts a single-page PDF. For multipage PDFs, select a page or an export mode:
 
-| 目的 | 追加するオプション | 結果 |
-| --- | --- | --- |
-| 2ページ目だけを変換 | `--page 2` | 指定した `output.ai` に保存 |
-| 全ページを別々に保存 | `--pages all` | `output_001.ai` などに保存 |
-| 指定ページを別々に保存 | `--pages 1,3-5` | 元のページ番号を付けて保存 |
-| 全ページを一つのAIに結合 | `--combine` | 各ページをアートボードにして保存 |
-| 指定ページだけを結合 | `--combine --pages 1,3-5` | 選択したページを一つのAIに保存 |
-| 未対応ページの画像化を禁止 | `--strict` | 未対応機能があればエラー |
-| 結果をJSONに保存 | `--report result.json` | AIと変換結果を一括保存 |
-| 既存出力の上書きを許可 | `--overwrite` | 既存AI・指定したレポートを上書き |
+| Purpose                          | Options                   | Result                                                              |
+| -------------------------------- | ------------------------- | ------------------------------------------------------------------- |
+| Convert page 2                   | `--page 2`                | Save to the specified `output.ai`                                   |
+| Export every page separately     | `--pages all`             | Save `output_001.ai`, etc.                                          |
+| Export selected pages separately | `--pages 1,3-5`           | Keep the original page numbers in filenames                         |
+| Combine every page               | `--combine`               | Save one AI with multiple artboards                                 |
+| Combine selected pages           | `--combine --pages 1,3-5` | Save the selected pages in one AI                                   |
+| Reject raster fallback           | `--strict`                | Fail if unsupported features are found                              |
+| Write a JSON report              | `--report result.json`    | Publish the AI files and report together                            |
+| Allow overwriting                | `--overwrite`             | Replace existing AI files and the specified report                  |
+| Display English                  | `--language en`           | English help, diagnostics, and generated defaults — the CLI default |
+| Display Japanese                 | `--language ja`           | Japanese help, diagnostics, and generated defaults                  |
 
-たとえば、全ページを一つのAIにまとめる場合は次のように実行します。
+The options are the same on all operating systems. In the examples below, Windows users should replace `.venv/bin/python` with `.\.venv\Scripts\python.exe`.
+
+Combine all pages into one AI:
 
 ```sh
 .venv/bin/python run_pdf2ai.py input.pdf --combine -o output.ai
 ```
 
-### AIを作らずに対応可否を確認する
+Check vector support without saving AI files:
 
 ```sh
 .venv/bin/python run_pdf2ai.py input.pdf --check
 ```
 
-Windowsでは、冒頭の `.venv/bin/python` を `.\.venv\Scripts\python.exe` に置き換えてください。
+Add `--combine` to the check command to inspect combined layout, color-space, and spot-definition constraints too. Preflight reports the first unsupported feature per page; it does not enumerate every possible issue or certify print quality.
 
-結合の配置・色空間の条件も調べる場合は `--check --combine` を使います。各ページの最初の未対応理由を表示する検査で、すべての問題や印刷品質を保証するものではありません。
+Display Japanese help:
 
-ほかに、`--ask-password`／`--password-file` による暗号化PDFの読み込み、`--flatten-annotations` による注釈・フォームの外観取り込み、`--timeout 秒` による変換時間の制限に対応しています。詳しくは[CLIオプションと対応形式](docs/technical.md)を参照してください。
+```sh
+.venv/bin/python run_pdf2ai.py --language ja --help
+```
 
-## DIC・東洋インキ（TOYO）の特色を使う
+### Additional CLI Options
 
-Scribusの色設定で、必要なパレットをインポートし、**特色として**使用してください。DICとTOYOの色データ・パレットは独立しています。TOYOのパレットは、新旧カラーブック別に用意しています。
+| Option                         | Behavior                                                                                             |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `--raster-dpi 300`             | Set raster fallback resolution; accepts 72–1200 dpi                                                  |
+| `--timeout 60`                 | Limit each conversion to 60 seconds; `0` disables the limit. A timeout prevents publishing the batch |
+| `--ask-password`               | Prompt for a PDF password without displaying it                                                      |
+| `--password-file password.txt` | Read the password from the first line of a UTF-8 file                                                |
+| `--flatten-annotations`        | Include annotation and form appearances as artwork; interactive behavior is not retained             |
+| `--outline-text`               | Use Ghostscript for additional text outlining before conversion                                      |
+| `--ghostscript PATH`           | Specify the Ghostscript executable                                                                   |
+| `--output-dir DIRECTORY`       | Choose a destination directory instead of a single output filename                                   |
 
-| パレット | 色数 | 受け付ける色名の例 | AIの特色スウォッチ |
-| --- | ---: | --- | --- |
-| [DIC Lab](integrations/scribus/palettes/DIC_Lab.xml) | 1280 | `DIC 1`、`DIC 1s`、`DIC 4` | 旧版DICカラーブックのCMYK代替値 |
-| [TOYO COLOR FINDER Lab](integrations/scribus/palettes/TOYO_COLOR_FINDER_Lab.xml) | 1079 | `CF 10001`、`CF10001` | 対応するLab特色 |
-| [TOYO 94 Lab](integrations/scribus/palettes/TOYO_94_Lab.xml) | 1050 | `TOYO 0001`、`TOYO 1` | 対応するLab特色 |
+`--page` cannot be combined with `--pages` or `--combine`. Text preprocessing of layered PDFs is unsupported. For the full technical explanation in Japanese, see the [CLI and supported-feature guide](docs/technical.md).
 
-DICのパレットはLab値を使いますが、登録済みDIC名のAI出力はCMYK基準へそろえます。TOYOはLabを使い、対応するLab入力の実際の値を保持します。TOYOの新旧カラーブックは別々に扱います。
+## DIC and TOYO Spot Colors
 
-ベクター変換できるページでは、特色名と塗り・線の濃度を保持し、特色をプロセスカラーへ分解しません。**ページが画像化された場合は、特色分版とパスの編集性が失われます。** 特色を残す必要があるときは、Scribusの画像化禁止設定またはCLIの `--strict` を使ってください。
+Import the required palette in Scribus's color settings and use the colors **as spot colors**. DIC and TOYO have independent data and palette files. The two TOYO books have separate palettes.
 
-プロセスカラーへ変換済みの図形から、名前だけで元の特色を復元する機能はありません。収録色・色名・代替値の詳しい説明は、[DIC特色の出力仕様](docs/dic-cmyk-reference.md)と[東洋インキの特色対応](docs/toyo-spot-colors.md)を参照してください。
+| Palette                                                                          | Colors | Accepted name examples     | AI spot swatch                        |
+| -------------------------------------------------------------------------------- | -----: | -------------------------- | ------------------------------------- |
+| [DIC Lab](integrations/scribus/palettes/DIC_Lab.xml)                             |   1280 | `DIC 1`, `DIC 1s`, `DIC 4` | Legacy DIC book CMYK alternate values |
+| [TOYO COLOR FINDER Lab](integrations/scribus/palettes/TOYO_COLOR_FINDER_Lab.xml) |   1079 | `CF 10001`, `CF10001`      | Matching Lab spot color               |
+| [TOYO 94 Lab](integrations/scribus/palettes/TOYO_94_Lab.xml)                     |   1050 | `TOYO 0001`, `TOYO 1`      | Matching Lab spot color               |
 
-## よくある質問・困ったとき
+The Scribus DIC palette uses Lab values, while recognized DIC names are normalized to the legacy CMYK definition for AI output. TOYO uses Lab; supported Lab inputs retain their actual values. The current and older TOYO books remain distinct.
 
-### Illustratorをインストールする必要はありますか？
+On vector-converted pages, spot names and fill/stroke tints are preserved without converting spots to process colors. **Rasterized pages lose spot separations and editable paths.** Enable strict mode when these must be retained.
 
-通常の変換にIllustratorは不要です。同梱の特色データも、そのまま利用できます。
+PDF2AI cannot restore spot names from artwork already converted to process colors. More details are available in the Japanese [DIC output specification](docs/dic-cmyk-reference.md) and [TOYO compatibility record](docs/toyo-spot-colors.md).
 
-### 変換後の文字を編集できますか？
+## Troubleshooting and Limitations
 
-文字はアウトラインになり、形状として編集できます。文字列・フォントとしての再編集はできません。フォントや文字表現が未対応の場合は、ページが画像化されるか、画像化禁止設定でエラーになります。
+### Do I need Illustrator installed?
 
-### 図形が画像になった場合はどうすればよいですか？
+No. Normal conversion uses the included converter and color data.
 
-書き出し前チェックやJSONログで未対応理由を確認してください。編集できるベクターが必要な場合は、元文書の未対応機能を変更するか、画像化禁止設定で出力を止めます。[対応機能と制限](docs/technical.md)に詳しい一覧があります。
+### Can I edit text after conversion?
 
-### Scribusで「変換用Pythonを見つけられない」と表示されます
+Text is converted to outlines and can be edited as shapes. It cannot be edited as text or have its font changed. Unsupported fonts or text features can cause raster fallback, or an error in strict mode.
 
-このREADMEの初回設定を、スクリプトと同じプロジェクトフォルダーで実行したか確認してください。Scribusの設定画面を使う場合は `".[scribus]"` のインストールが必要です。別のPython環境を使う設定は[Scribus連携の詳細](docs/technical.md)を参照してください。
+### Why did my artwork become an image?
 
-### 既存のAIファイルを上書きできますか？
+Review preflight or the JSON report for the unsupported feature. If editable vectors are required, adjust the source document or enable strict mode to stop the export. Rasterization affects the entire unsupported page.
 
-Scribusでは上書き確認が表示されます。CLIでは、上書きする場合だけ `--overwrite` を指定してください。保存先フォルダーは、実行前に作成しておきます。
+### Scribus cannot find the conversion Python environment
 
-## 対応範囲と検証記録
+Run the installation commands in the original project folder. The Scribus dialogs require the `".[scribus]"` installation. For another Python environment, set `PDF2AI_PYTHON` to its Python executable. Keep the project files together.
 
-PDF2AIは対応範囲を検証しながら開発している変換ツールです。AIとして保存できることと、あらゆるPDF・Illustratorバージョン・印刷環境で完全に再現できることは別です。色、形状、文字のアウトライン、特色分版、画像化の有無を入稿前に確認してください。
+### Can I overwrite existing AI files?
 
-- [技術ガイド：CLI・対応機能・ファイル形式](docs/technical.md)
-- [Scribusの保存・キャンセル・復元処理](docs/scribus-export-safety.md)
-- [Illustrator出力との形式・描画比較](docs/ai-files-format-alignment.md)
-- [v1.0.0前の最終確認：自動テスト・配布物の検証](docs/release-v1.0.0-check.md)
+Scribus asks for confirmation. In the CLI, specify `--overwrite` explicitly. Without permission, existing outputs are kept.
+
+### Does AI output guarantee an identical print result?
+
+No. Saving a valid AI file does not guarantee identical rendering for every PDF, Illustrator version, color setting, or print workflow. Check colors, shapes, outlined text, spot separations, and raster fallback before production.
+
+## Japanese Documentation and Verification Records
+
+See [interface language selection and verification](docs/interface-languages.md) for how English and Japanese are selected and tested.
+
+- [日本語の導入・操作・特色ガイド](README_ja.md)
+- [Technical guide: CLI, supported features, and file format](docs/technical.md)
+- [Scribus export, cancellation, and recovery](docs/scribus-export-safety.md)
+- [Illustrator format and rendering comparisons](docs/ai-files-format-alignment.md)
+- [Pre-v1.0.0 verification: automated tests and distribution checks](docs/release-v1.0.0-check.md)

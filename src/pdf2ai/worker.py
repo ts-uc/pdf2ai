@@ -7,6 +7,7 @@ import sys
 from contextlib import redirect_stdout
 
 from .vector import ConversionError
+from .i18n import set_language
 
 
 def run_conversion(request, timeout):
@@ -37,6 +38,7 @@ def main():
     from .multiboard import convert_document
     try:
         request = json.load(sys.stdin)
+        set_language(request.pop('language','en'))
         source,output = request.pop('source'),request.pop('output')
         combined = request.pop('combined')
         function = convert_document if combined else convert

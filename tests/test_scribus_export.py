@@ -191,6 +191,7 @@ expected=str(document.with_suffix('.ai'))
 assert dialog.findChild(QLineEdit,'output').text()==expected
 calls=[]
 def choose(parent,caption,initial,filter,**kwargs):
+    assert kwargs['options'] & QFileDialog.Option.DontUseNativeDialog
     calls.append(initial)
     return (expected,'')
 QFileDialog.getSaveFileName=choose
@@ -208,7 +209,7 @@ print(json.dumps(dialog.export_options))
     result=subprocess.run([sys.executable,'-c',code,str(SCRIPT),str(tmp_path),str(checked),output_mode],env=env,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
     assert json.loads(result.stdout)=={'pages':[2],'output':str(tmp_path/'original.ai'),'write_report':checked,'output_mode':output_mode,
-                                      'strict':False,'dpi':300,'bleeds':False,'crop_marks':False,'timeout_minutes':7}
+                                      'strict':False,'dpi':300,'bleeds':False,'crop_marks':False,'timeout_minutes':7,'language':'ja'}
 
 
 def test_combined_worker_preserves_all_pdf_pages_and_native_artboards(tmp_path):

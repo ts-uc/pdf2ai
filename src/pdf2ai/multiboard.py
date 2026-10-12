@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 
 import pikepdf
+from .i18n import tr
 
 from .layers import Layer
 from .native import drawing_report, make_private, save_ai
@@ -36,13 +37,13 @@ def pack_pages(drawings,target,limit,gap):
     for drawing in drawings:
         w, h = drawing.box[2] - drawing.box[0], drawing.box[3] - drawing.box[1]
         if w > limit or h > limit:
-            raise ConversionError('ページがAIキャンバスに収まりません。ページ別出力を選択してください。')
+            raise ConversionError(tr('ページがAIキャンバスに収まりません。ページ別出力を選択してください。'))
         if x and x + w > target:
             x = 0
             y += row_height + gap
             row_height = 0
         if y + h > limit:
-            raise ConversionError('全ページがAIキャンバスに収まりません。対象ページを減らすか、ページ別出力を選択してください。')
+            raise ConversionError(tr('全ページがAIキャンバスに収まりません。対象ページを減らすか、ページ別出力を選択してください。'))
         boxes.append((x, y, x + w, y + h))
         x += w + gap
         row_height = max(row_height, h)
@@ -62,7 +63,7 @@ def translate_drawing(drawing, box, page):
         return Clip([path(p) for p in c.paths], c.even_odd)
     layers = {}
     for i, layer in enumerate([None, *drawing.layers]):
-        layers[layer] = Layer((page, i), f'ページ {page}' + (f' / {layer.name}' if layer else ''),
+        layers[layer] = Layer((page, i), tr('ページ {v0}', v0=page) + (f' / {layer.name}' if layer else ''),
                               layer.visible if layer else True, layer.locked if layer else False,
                               layer.printable if layer else True)
     def paint(value):
@@ -100,9 +101,9 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
     if paths_conflict(source, output):
         raise ConversionError('Input and output must differ')
     if output.suffix.lower() != '.ai' or not output.parent.is_dir():
-        raise ConversionError('出力先フォルダーと .ai 拡張子を確認してください。')
+        raise ConversionError(tr('出力先フォルダーと .ai 拡張子を確認してください。'))
     if not inspection_only and output.exists() and not overwrite:
-        raise FileExistsError(f'出力が既に存在します: {output.name}')
+        raise FileExistsError(tr('出力が既に存在します: {v0}', v0=output.name))
     if not inspection_only and output.is_dir():raise ConversionError('Output must be a file, not a directory')
     if not math.isfinite(raster_dpi) or not 72 <= raster_dpi <= 1200:
         raise ConversionError('Raster DPI must be between 72 and 1200')
@@ -113,7 +114,7 @@ def convert_document(source, output, *, page_labels=None, pages=None, overwrite=
         if not selected or any(type(p) is not int or not 1 <= p <= len(pdf.pages) for p in selected) or len(set(selected)) != len(selected):
             raise ConversionError('Invalid page selection')
         if not 1 <= len(selected) <= 1000:
-            raise ConversionError('1つのAIにまとめられるページ数は1〜1000です。')
+            raise ConversionError(tr('1つのAIにまとめられるページ数は1〜1000です。'))
         labels = list(page_labels) if page_labels is not None else selected
         if len(labels) != len(selected) or any(type(p) is not int or p < 1 for p in labels) or len(set(labels)) != len(labels):
             raise ConversionError('Invalid page selection')
@@ -183,7 +184,7 @@ def _assemble_document(pdf, source, output, selected, labels, normalized_dic, no
             make_private(drawing, source.name)  # Validate native serialization, too.
         except (ConversionError, pikepdf.PdfError, NotImplementedError) as error:
             if not raster_fallback:
-                raise ConversionError(f'ページ{labels[index]}：{error}') from error
+                raise ConversionError(tr('ページ{v0}：{v1}', v0=labels[index], v1=error)) from error
             from .rasterize import render_drawing
             reason = str(error)
             drawing = render_drawing(render_source(), number-1, raster_dpi)
@@ -203,7 +204,7 @@ def _assemble_document(pdf, source, output, selected, labels, normalized_dic, no
     for drawing,report in zip(shifted,reports):
         if any(isinstance(i,GroupBoundary) and i.color_model is not None and i.color_model != combined_model
                for i in drawing.items):
-            raise ConversionError(f"ページ{report['page']}の透明グループ色空間が結合AIと異なります。ページ別出力を選択してください。")
+            raise ConversionError(tr('ページ{v0}の透明グループ色空間が結合AIと異なります。ページ別出力を選択してください。', v0=report['page']))
         # Choosing an RGB document at merge time also changes the image
         # destination space, even if the individual page was CMYK.
         if combined_model == 'RGB':
@@ -219,7 +220,7 @@ def _assemble_document(pdf, source, output, selected, labels, normalized_dic, no
     for drawing in shifted:
         for spot in drawing.spots:
             if spot.name in spots and spots[spot.name] != spot:
-                raise ConversionError(f'ページ間で特色「{spot.name}」の定義が異なります。ページ別出力を選択してください。')
+                raise ConversionError(tr('ページ間で特色「{v0}」の定義が異なります。ページ別出力を選択してください。', v0=spot.name))
             spots[spot.name] = spot
     merged = Drawing((min(b[0] for b in boxes), min(b[1] for b in boxes),
                       max(b[2] for b in boxes), max(b[3] for b in boxes)),

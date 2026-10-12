@@ -11,6 +11,7 @@ import zlib
 from dataclasses import replace
 
 import pikepdf
+from .i18n import tr
 from PIL import Image
 from fontTools.pens.boundsPen import BoundsPen
 
@@ -124,7 +125,7 @@ def layer_runs(drawing):
     counts = {}
     result = []
     for layer,items in runs:
-        name = layer.name if layer is not None else 'レイヤー 1'
+        name = layer.name if layer is not None else tr('レイヤー 1')
         counts[name] = counts.get(name,0)+1
         if counts[name]>1: name += f' ({counts[name]})'
         result.append((layer,name,items))
@@ -171,7 +172,7 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
         for i,spot in enumerate(drawing.spots):
             header.append(("%%CMYKCustomColor: " if i == 0 else "%%+ ") +
                           " ".join(num(v) for v in spot.cmyk) + " " + ps_string(spot.name))
-    header += ['%%CMYKProcessColor: 1 1 1 1 '+ps_string('[レジストレーション]'), "%%EndComments"]
+    header += ['%%CMYKProcessColor: 1 1 1 1 '+ps_string(tr('[レジストレーション]')), "%%EndComments"]
     # Adobe places plate declarations before the page/document settings.
     settings = next(i for i,line in enumerate(header) if line.startswith('%AI3_Cropmarks:'))
     plates = next(i for i,line in enumerate(header) if line.startswith(('%%DocumentCustomColors:', '%%CMYKProcessColor:')))
@@ -180,17 +181,17 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
                                    if item.paint != 'stroke' and isinstance(item.state.fill, Gradient)))
     body = ["%%BeginProlog", "%%EndProlog", "%%BeginSetup",
             '%AI5_Begin_NonPrinting', 'Np', '%AI9_BeginArtStyles', '/KnownStyle :',
-            ps_string('[デフォルト]')+' /Name ,', '/SimpleStyle :', '0 O', '0 0 0 0 k',
+            ps_string(tr('[デフォルト]'))+' /Name ,', '/SimpleStyle :', '0 O', '0 0 0 0 k',
             '0 R', '0 0 0 1 K', '0 1 0 0 0 Xy', '0 J 0 j 1 w 10 M []0 d',
             '0 XR', '1 1 Xd', '/Paint ;', ' /Def ;', '%AI9_EndArtStyles', '%AI5_End_NonPrinting--',
-            "%AI5_BeginPalette", "0 0 Pb", '1 1 1 1 '+ps_string('[レジストレーション]')+' 0 Xs',
-            ps_string('[レジストレーション]'), 'Pc']
+            "%AI5_BeginPalette", "0 0 Pb", '1 1 1 1 '+ps_string(tr('[レジストレーション]'))+' 0 Xs',
+            ps_string(tr('[レジストレーション]')), 'Pc']
     for spot in drawing.spots:
         body += [color_command(Color('Spot',(1,),spot)),
                  ps_string(spot.name), "Pc"]
     body += ["PB", "%AI5_EndPalette",
              '%AI5_Begin_NonPrinting', 'Np', '%AI9_BeginArtStyleList',
-             ps_string('[デフォルト]'), '%AI9_EndArtStyleList', '%AI5_End_NonPrinting--',
+             ps_string(tr('[デフォルト]')), '%AI9_EndArtStyleList', '%AI5_End_NonPrinting--',
              '%AI5_Begin_NonPrinting', 'Np', '%AI24_BeginSymbolList',
              '%AI24_EndSymbolList', '%AI5_End_NonPrinting--', f"{len(gradients)} Bn"]
     for gradient in gradients:
@@ -209,7 +210,7 @@ def make_private(drawing: Drawing, title: str, *, artboards=None) -> tuple[bytes
     body += ["%AI9_BeginDocumentData",
              "%_/Document :", "%_/Dictionary :", "%_16383 /Int (AIDocumentCanvasSize) ,",
              "%_/Array :"]
-    for name, (ax0, ay0, ax1, ay1) in artboards or [('アートボード 1', drawing.box)]:
+    for name, (ax0, ay0, ax1, ay1) in artboards or [(tr('アートボード 1'), drawing.box)]:
         body += ["%_/Dictionary :", f"%_{int(artboards is None)} /Bool (IsArtboardDefaultName) ,",
              "%_0 /Bool (IsArtboardSelected) ,", "%_0 /Bool (IsArtboardLocked) ,",
              "%_/FillStyle : 0 1 0 0 0 Xy", "%_0 J 0 j 1 w 10 M []0 d",

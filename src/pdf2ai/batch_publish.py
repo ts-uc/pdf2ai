@@ -1,5 +1,6 @@
 """Publish staged files together; restore previous files on ordinary failures."""
 import json
+from .i18n import tr
 import errno
 import os
 from pathlib import Path
@@ -56,7 +57,7 @@ def publish_batch(files, *, overwrite=False):
             except OSError as error:failures.append(f'{destination}: {error}')
         if failures:
             retain_recovery = True
-            raise RuntimeError('出力の復元に失敗しました。バックアップを保持しています: '
+            raise RuntimeError(tr('出力の復元に失敗しました。バックアップを保持しています: ')
                                +str(recovery)+'\n'+'\n'.join(failures))
         raise
     finally:
