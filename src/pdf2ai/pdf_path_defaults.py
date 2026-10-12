@@ -63,7 +63,8 @@ def fill_commands(path, matrix, box):
     vertices=[coords for op,coords in commands if op in ('m','l')]
     trimmed=False
     if len(vertices)==5 and vertices[-1]==vertices[0]:vertices=vertices[:-1]
-    if (len(vertices)==4 and sum(op=='m' for op,_ in commands)==1
+    if (len(vertices)==4 and len(set(vertices))==4
+            and sum(op=='m' for op,_ in commands)==1
             and all(op!='h' for op,_ in commands[:-1])
             and all(op in ('m','l','h') for op,_ in commands)
             and all(a[0]==b[0] or a[1]==b[1] for a,b in zip(vertices,vertices[1:]+vertices[:1]))):

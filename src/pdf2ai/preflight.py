@@ -43,12 +43,20 @@ def inspect_combination(source, pages=None, raster_dpi=300, *, raster_fallback=T
                         page_labels=None, progress=None):
     """Validate packing, final color model and serialization without publishing AI."""
     from .multiboard import convert_document
+    pages = list(pages) if pages is not None else None
+    page_labels = list(page_labels) if page_labels is not None else None
+    if page_labels is not None and (not page_labels
+            or any(type(label) is not int or label < 1 for label in page_labels)
+            or len(set(page_labels)) != len(page_labels)):
+        raise ConversionError('Invalid page labels')
     try:
         return convert_document(source, None, pages=pages, page_labels=page_labels,
             raster_dpi=raster_dpi, raster_fallback=raster_fallback,
             progress=progress, inspection_only=True)
     except ConversionError as error:
         results = inspect_document(source, pages, raster_dpi)
+        if page_labels is not None and len(page_labels)!=len(results):
+            raise ConversionError('Page labels must match the selected page count') from error
         for index, item in enumerate(results):
             if page_labels is not None: item['page'] = page_labels[index]
             item.update(combined_constraints_checked=True, combined_blocker=str(error))

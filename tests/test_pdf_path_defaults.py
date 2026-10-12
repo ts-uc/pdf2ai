@@ -144,3 +144,14 @@ def test_shared_anchors_remain_joined_when_another_gap_requires_protection():
     assert first[3]==pytest.approx(third[1],abs=1e-12)
     gap=paths[2].commands[0][1][0]-paths[1].commands[1][1][0]
     assert gap==pytest.approx(.0002,abs=1e-12)
+
+
+@pytest.mark.parametrize('paint',[b'f',b'f*'])
+def test_backtracking_zero_area_path_is_not_expanded_to_page(paint):
+    # Four axis-aligned edges and a page-sized bounding box do not imply a
+    # rectangle: these two retraced lines enclose no area.
+    content=b'0 0 0 1 k -10 -10 m 110 -10 l -10 -10 l -10 110 l h '+paint
+    pdf,page=make_page(content)
+    original=page.Contents.read_bytes()
+    assert align_pdf_fill_paths(page)==0
+    assert page.Contents.read_bytes()==original

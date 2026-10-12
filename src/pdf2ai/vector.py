@@ -482,6 +482,17 @@ def image_samples(image, width, height, channels, bits):
                  for y in range(height) for i in range(width*channels))
 
 
+def decoded_pdf_image(image):
+    """Translate decoder failures into ordinary unsupported-image diagnostics."""
+    from pikepdf.models.image import (ImageDecompressionError,InvalidPdfImageError,
+                                    NotExtractableError,UnsupportedImageTypeError)
+    try:
+        return pikepdf.PdfImage(image).as_pil_image()
+    except (ValueError,OSError,ImageDecompressionError,InvalidPdfImageError,
+            NotExtractableError,UnsupportedImageTypeError) as error:
+        raise ConversionError(f'Unable to decode image samples: {error}') from error
+
+
 def read_image(image, state: State, *, color_space=None) -> Raster:
     if str(image.get("/Subtype")) != "/Image":
         raise ConversionError("Expected an image XObject after Form expansion")
@@ -567,7 +578,7 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
                     raise ConversionError('Invalid 16-bit soft mask sample length')
                 alpha = bytes((int.from_bytes(raw[i:i+2],'big')+128)//257 for i in range(0,len(raw),2))
             else:
-                alpha = pikepdf.PdfImage(mask).as_pil_image().convert('L').tobytes()
+                alpha = decoded_pdf_image(mask).convert('L').tobytes()
         finally:
             if mask_decode is not None: mask['/Decode'] = mask_decode
         if mask_decode is not None:
@@ -589,7 +600,7 @@ def read_image(image, state: State, *, color_space=None) -> Raster:
     # scope. Use the resolved space while decoding, then restore the source.
     image['/ColorSpace'] = pikepdf.Array([space[0],base,space[2],space[3]]) if indexed else base
     try:
-        decoded = pikepdf.PdfImage(image).as_pil_image() if bits==8 and not indexed else None
+        decoded = decoded_pdf_image(image) if bits==8 and not indexed else None
         mode = {'RGB':'RGB','CMYK':'CMYK','Gray':'L'}[model]
         channels = {'RGB':3,'CMYK':4,'Gray':1}[model]
         samples = None
@@ -779,6 +790,8 @@ def _calculator(function, tint: float) -> tuple[float, ...]:
 def read_spot(space) -> Spot:
     from .dic import dic_color, dic_name
     from .toyo import toyo_color, toyo_name
+    if not isinstance(space,pikepdf.Array) or len(space)!=4 or str(space[0])!='/Separation':
+        raise ConversionError('Only CMYK or registered DIC/TOYO Lab Separation spots are supported')
     name = str(space[1])[1:]
     reference = dic_color(name)
     is_dic = reference is not None
@@ -826,6 +839,37 @@ def read_spot(space) -> Spot:
     bounds = ((0,100),(-128,127),(-128,127)) if is_lab else ((0,1),)*4
     if not all(math.isfinite(v) and lo <= v <= hi for v,(lo,hi) in zip(full,bounds)):
         raise ConversionError("Invalid spot values")
+    if is_lab:
+        lab_range = alternate[1].get('/Range',pikepdf.Array([-100,100,-100,100]))
+        if not isinstance(lab_range,pikepdf.Array) or len(lab_range)!=4:
+            raise ConversionError('Invalid spot Lab range')
+        try:
+            limits = tuple(float(v) for v in lab_range)
+        except (TypeError,ValueError,OverflowError) as error:
+            raise ConversionError('Invalid spot Lab range') from error
+        for index,solid in enumerate(full[1:]):
+            lo,hi = limits[2*index:2*index+2]
+            if not math.isfinite(lo) or not math.isfinite(hi) or lo > hi:
+                raise ConversionError('Invalid spot Lab range')
+            if lo > min(0,solid) or hi < max(0,solid):
+                raise ConversionError('Clipping spot Lab range is unsupported')
+    output_range = fn.get('/Range')
+    if output_range is not None:
+        if not isinstance(output_range, pikepdf.Array) or len(output_range) != 2*len(full):
+            raise ConversionError('Invalid spot tint function range')
+        try:
+            limits = tuple(float(v) for v in output_range)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ConversionError('Invalid spot tint function range') from error
+        white = (100,0,0) if is_lab else (0,0,0,0)
+        for index,(paper,solid) in enumerate(zip(white,full)):
+            lo,hi = limits[2*index:2*index+2]
+            if not math.isfinite(lo) or not math.isfinite(hi) or lo > hi:
+                raise ConversionError('Invalid spot tint function range')
+            # Clipping an otherwise linear tint creates a different function.
+            # Native spot swatches cannot retain those clipped tint curves.
+            if lo > min(paper,solid) or hi < max(paper,solid):
+                raise ConversionError('Clipping spot tint function range is unsupported')
     if is_dic:
         return Spot(name, tuple(reference['cmyk']))
     return Spot(name, tuple(reference['cmyk']), full if is_lab else tuple(reference['lab'])) if reference else Spot(name, full)
@@ -1007,13 +1051,14 @@ def read_drawing(page, *, root=None) -> Drawing:
     text_active = False
     text_matrix = text_line = IDENTITY
     text_clips = []
+    text_clip_used = False
     font_cache = {}
     outlined_glyphs = 0
     outlined_strokes = 0
     approximated_strokes = 0
 
     def show_text(string):
-        nonlocal text_matrix,outlined_glyphs,outlined_strokes,approximated_strokes
+        nonlocal text_matrix,outlined_glyphs,outlined_strokes,approximated_strokes,text_clip_used
         if state.text_font is None: raise ConversionError("Text shown without a font")
         font = state.text_font
         for code in font.codes(string):
@@ -1022,7 +1067,9 @@ def read_drawing(page, *, root=None) -> Drawing:
             glyph_paths,width = font.outlines(code,glyph_matrix)
             if any(len(path.commands)>8191 for path in glyph_paths): raise ConversionError("Text glyph exceeds Illustrator segment limit")
             mode = state.text_render_mode
-            if mode>=4: text_clips.extend(glyph_paths)
+            if mode>=4:
+                text_clip_used = True
+                text_clips.extend(glyph_paths)
             if glyph_paths and mode not in (3,7):
                 paint = 'stroke' if mode in (1,5) else 'both' if mode in (2,6) else 'fill'
                 if paint!='fill' and state.stroke_adjust:
@@ -1116,10 +1163,20 @@ def read_drawing(page, *, root=None) -> Drawing:
         operators[op] = operators.get(op, 0) + 1
         if op == 'BT':
             if text_active or paths or pending_clip is not None: raise ConversionError("Invalid text object boundary")
-            text_active = True;text_matrix = text_line = IDENTITY;text_clips = []
+            text_active = True;text_matrix = text_line = IDENTITY;text_clips = [];text_clip_used = False
         elif op == 'ET':
             if not text_active: raise ConversionError("Text object end without begin")
-            if text_clips: state.clips += (Clip(text_clips,False),)
+            if text_clip_used:
+                # A space glyph contributes no outline, but still intersects
+                # the clipping region with an empty area. Illustrator ignores
+                # degenerate clip paths, so intersect two disjoint rectangles.
+                if text_clips:
+                    state.clips += (Clip(text_clips,False),)
+                else:
+                    for x in (0.,2.):
+                        rectangle = Subpath([('m',(x,0.)),('L',(x+1,0.)),
+                                             ('L',(x+1,1.)),('L',(x,1.))],True)
+                        state.clips += (Clip([rectangle],False),)
             text_active = False;text_clips = []
         elif op in ('Tf','Tc','Tw','Tz','TL','Tr','Ts','Tm','Td','TD','T*','Tj','TJ',"'",'"'):
             if not text_active: raise ConversionError("Text operator outside a text object")
@@ -1172,8 +1229,18 @@ def read_drawing(page, *, root=None) -> Drawing:
             state.matrix = compose(state.matrix, matrix)
         elif op in ("cs", "CS"):
             space = spaces.get(str(args[0]), args[0])
-            if op == "cs": state.fill_space = space
-            else: state.stroke_space = space
+            if str(space)=='/Pattern':
+                initial_color = Color('Pattern',())  # No pattern selected yet.
+            else:
+                initial_values = {'/DeviceGray':(0,),'/DeviceRGB':(0,0,0),
+                                  '/DeviceCMYK':(0,0,0,1)}.get(str(space),(1,))
+                if isinstance(space,pikepdf.Array) and len(space) and str(space[0])=='/ICCBased':
+                    if len(space)!=2 or not isinstance(space[1],pikepdf.Stream):
+                        raise ConversionError('Invalid ICC color space')
+                    initial_values = (0,)*int(space[1].get('/N',0))
+                initial_color = color(space,initial_values)
+            if op == "cs": state.fill_space,state.fill = space,initial_color
+            else: state.stroke_space,state.stroke = space,initial_color
         elif op in ("sc", "scn", "SC", "SCN"):
             if op.islower(): state.fill = color(state.fill_space, args)
             else: state.stroke = color(state.stroke_space, args)
@@ -1405,6 +1472,8 @@ def read_drawing(page, *, root=None) -> Drawing:
         else:
             colors = ([item.state.fill] if item.paint=='fill' else [item.state.stroke] if item.paint=='stroke' else [item.state.fill,item.state.stroke])
             for value in colors:
+                if isinstance(value,Color) and value.model=='Pattern':
+                    raise ConversionError('Pattern color must be selected before painting')
                 models.update(c.model for _,c in value.stops) if isinstance(value,Gradient) else models.add(value.model)
     color_model = ('RGB' if str(group.get('/CS')) == '/DeviceRGB' else 'CMYK') if group is not None else ('RGB' if 'RGB' in models and not models.intersection({'CMYK','Spot'}) else 'CMYK')
     if any(isinstance(i,GroupBoundary) and i.color_model is not None and i.color_model != color_model for i in items):

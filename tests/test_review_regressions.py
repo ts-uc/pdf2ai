@@ -74,3 +74,29 @@ def test_page_selector_normalizes_whitespace_and_rejects_zero_pages():
     assert select_pages(' all ',1)==[1]
     with pytest.raises(ConversionError,match='ページがありません'):
         select_pages('all',0)
+
+
+@pytest.mark.parametrize('labels',[[],[1],[-1,2],[1,1]])
+def test_combined_inspection_rejects_invalid_labels_cleanly(tmp_path,labels):
+    from pdf2ai.preflight import inspect_combination
+    pdf=pikepdf.new()
+    for _ in range(2):
+        page=pdf.add_blank_page(page_size=(100,100))
+        page.Contents=pdf.make_stream(b'10 10 20 20 re f')
+    source=tmp_path/'source.pdf';pdf.save(source)
+    with pytest.raises(ConversionError,match='labels'):
+        inspect_combination(source,page_labels=labels)
+    assert not list(tmp_path.glob('*.ai'))
+
+
+def test_combined_inspection_retains_iterator_selection_when_reporting_blocker(tmp_path):
+    from pdf2ai.preflight import inspect_combination
+    pdf=pikepdf.new()
+    for _ in range(2):
+        page=pdf.add_blank_page(page_size=(100,100))
+        page.Contents=pdf.make_stream(b'BX EX')
+    source=tmp_path/'source.pdf';pdf.save(source)
+    rows=inspect_combination(source,pages=iter([1,2]),page_labels=iter([3,5]),raster_fallback=False)
+    assert [r['page'] for r in rows]==[3,5]
+    assert all(r.get('combined_blocker') and not r['native_supported'] for r in rows)
+    assert not list(tmp_path.glob('*.ai'))

@@ -76,3 +76,27 @@ def test_preflight_rejects_duplicate_pages_and_reports_vector_plan(tmp_path):
     with pytest.raises(ConversionError,match='selection'):
         inspect_document(source,pages=[1,1])
     assert inspect_document(source,pages=[2])[0]['planned_mode']=='vector'
+
+
+@pytest.mark.parametrize('broken_mask',[False,True])
+def test_truncated_eight_bit_image_is_diagnostic_and_restores_resources(tmp_path,broken_mask):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    image=make_image(pdf,b'\xff\0\0' if broken_mask else b'',bits=8)
+    image.Decode=[1,0]*3
+    mask=make_image(pdf,b'' if broken_mask else b'\x80',bits=8,space='/DeviceGray')
+    mask.Decode=[1,0];image.SMask=mask
+    with pytest.raises(ConversionError,match='decode image samples'):
+        read_image(image,State())
+    assert image.SMask.objgen==mask.objgen
+    assert list(image.Decode)==[1,0]*3 and list(mask.Decode)==[1,0]
+    assert str(image.ColorSpace)=='/DeviceRGB'
+    page.Resources=pikepdf.Dictionary(XObject=pikepdf.Dictionary(I=image))
+    page.Contents=pdf.make_stream(b'80 0 0 80 10 10 cm /I Do')
+    source=tmp_path/'broken.pdf';pdf.save(source);original=source.read_bytes()
+    result=inspect_document(source)[0]
+    assert not result['native_supported'] and 'decode image samples' in result['first_blocker']
+    output=tmp_path/'old.ai';output.write_bytes(b'previous')
+    with pytest.raises(ConversionError,match='decode image samples'):
+        convert(source,output,overwrite=True,raster_fallback=False)
+    assert output.read_bytes()==b'previous' and source.read_bytes()==original
+    assert convert(source,output,overwrite=True)['rasterized']

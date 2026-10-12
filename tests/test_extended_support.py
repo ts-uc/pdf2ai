@@ -6,7 +6,7 @@ import pymupdf
 import pytest
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from pdf2ai.native import convert,read_private
+from pdf2ai.native import convert,read_private,make_private
 from pdf2ai.vector import ConversionError,read_drawing
 from test_common_features import feature_pdf
 
@@ -135,3 +135,30 @@ def test_fallback_memory_limit(tmp_path):
         p.pages[0].Contents=pikepdf.Array([p.pages[0].Contents,p.make_stream(b'q 0 w 10 10 m 50 50 l S Q')]);p.save(source)
     with pytest.raises(ConversionError,match='million pixels'):convert(source,output,raster_dpi=1200)
     assert not output.exists()
+
+
+@pytest.mark.parametrize('mode',[4,5,6,7])
+def test_whitespace_text_clip_has_empty_area(mode):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Resources=pikepdf.Dictionary(Font=pikepdf.Dictionary(F=pikepdf.Dictionary(
+        Type=pikepdf.Name.Font,Subtype=pikepdf.Name.Type1,BaseFont=pikepdf.Name.Helvetica)))
+    page.Contents=pdf.make_stream(b'BT /F 20 Tf '+str(mode).encode()+
+        b' Tr ( ) Tj 0 Tr ET 1 0 0 rg 0 0 100 100 re f')
+    drawing=read_drawing(page)
+    clips=drawing.paths[-1].state.clips
+    assert len(clips)==2
+    assert all(len(clip.paths)==1 and clip.paths[0].closed for clip in clips)
+    first_x=[coords[0] for _,coords in clips[0].paths[0].commands]
+    second_x=[coords[0] for _,coords in clips[1].paths[0].commands]
+    assert max(first_x)<min(second_x)
+    _,private=make_private(drawing,'space.pdf')
+    assert private.count(b'\rW\rn')==2
+
+
+@pytest.mark.parametrize('text',[b'() Tj',b''])
+def test_clipping_mode_without_any_character_does_not_add_clip(text):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Resources=pikepdf.Dictionary(Font=pikepdf.Dictionary(F=pikepdf.Dictionary(
+        Type=pikepdf.Name.Font,Subtype=pikepdf.Name.Type1,BaseFont=pikepdf.Name.Helvetica)))
+    page.Contents=pdf.make_stream(b'BT /F 20 Tf 7 Tr '+text+b' ET 1 0 0 rg 0 0 100 100 re f')
+    assert not read_drawing(page).paths[-1].state.clips
