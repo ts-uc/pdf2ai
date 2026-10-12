@@ -190,7 +190,7 @@ def _assemble_document(pdf, source, output, selected, labels, normalized_dic, no
         if normalized_dic[number]:
             drawing.color_conversions.append('DIC spot alternate colors normalized to legacy CMYK book: '+', '.join(normalized_dic[number]))
         if normalized_toyo[number]:
-            drawing.color_conversions.append('TOYO spot alternate colors normalized to independent Lab book: '+', '.join(normalized_toyo[number]))
+            drawing.color_conversions.append('TOYO spot names and CMYK alternates normalized using independent Lab book: '+', '.join(normalized_toyo[number]))
         drawings.append(drawing)
         report = drawing_report(drawing, source, output, number-1,
                                 'raster-fallback' if reason else 'vector', reason, raster_dpi, outline_text, 0)

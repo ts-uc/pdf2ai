@@ -147,7 +147,7 @@ def test_toyo_xmp_records_actual_lab_swatch(tmp_path):
         graphic='{http://ns.adobe.com/xap/1.0/g/}'
         assert xml.find('.//'+graphic+'mode').text=='LAB'
         assert [float(xml.find('.//'+graphic+key).text) for key in ('L','A','B')]==lab
-        assert '/Group' in pdf.pages[0].obj
+        assert '/Group' not in pdf.pages[0].obj
 
 
 def test_xmp_only_title_is_preserved(tmp_path):

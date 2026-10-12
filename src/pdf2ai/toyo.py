@@ -62,8 +62,12 @@ def normalize_pdf_spots(page):
                 spot = read_spot(space)
             except (ConversionError,pikepdf.PdfError,NotImplementedError,ValueError,TypeError,IndexError,AttributeError):
                 continue
+            # Lab input keeps its actual values, but aliases must also identify
+            # the same plate in the PDF view as in the editable AI swatches.
+            if str(space[1])[1:] != spot.name:
+                space[1] = pikepdf.Name('/'+spot.name)
+                changed.add(spot.name)
             if str(space[2]) != '/DeviceCMYK': continue
-            space[1] = pikepdf.Name('/'+spot.name)
             space[2] = pikepdf.Array([pikepdf.Name.Lab,pikepdf.Dictionary(
                 WhitePoint=[.964203,1,.824905],Range=[-128,127,-128,127])])
             space[3] = pikepdf.Dictionary(FunctionType=2,Domain=[0,1],

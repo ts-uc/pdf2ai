@@ -405,7 +405,7 @@ def convert(source: Path | str, output: Path | str, *, page_number: int | None =
         if normalized_dic:
             drawing.color_conversions.append('DIC spot alternate colors normalized to legacy CMYK book: '+', '.join(normalized_dic))
         if normalized_toyo:
-            drawing.color_conversions.append('TOYO spot alternate colors normalized to independent Lab book: '+', '.join(normalized_toyo))
+            drawing.color_conversions.append('TOYO spot names and CMYK alternates normalized using independent Lab book: '+', '.join(normalized_toyo))
         # Remove pages in reverse order so page dictionaries/resources remain owned
         # by this PDF, including OutputIntents and embedded color profiles.
         for i in range(len(pdf.pages)-1,-1,-1):

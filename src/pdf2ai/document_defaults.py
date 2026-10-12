@@ -49,12 +49,38 @@ def fill_artwork_bounds(drawing):
     return pen.bounds
 
 
+def profiled_spot_resources(resources):
+    """Keep the original blending context for profile-based spot alternates."""
+    pending=[resources];seen=set()
+    while pending:
+        resource=pending.pop()
+        if not isinstance(resource,pikepdf.Dictionary):continue
+        if resource.objgen!=(0,0):
+            if resource.objgen in seen:continue
+            seen.add(resource.objgen)
+        spaces=resource.get('/ColorSpace',{})
+        if not isinstance(spaces,(dict,pikepdf.Dictionary)):return True
+        for space in spaces.values():
+            if (isinstance(space,pikepdf.Array) and len(space)==4 and str(space[0])=='/Separation'
+                    and isinstance(space[2],pikepdf.Array) and len(space[2]) and str(space[2][0])=='/ICCBased'):
+                return True
+        objects=resource.get('/XObject',{})
+        if not isinstance(objects,(dict,pikepdf.Dictionary)):return True
+        for obj in objects.values():
+            if isinstance(obj,pikepdf.Stream) and str(obj.get('/Subtype'))=='/Form':
+                if obj.objgen in seen:continue
+                seen.add(obj.objgen);pending.append(obj.get('/Resources'))
+    return False
+
+
 def align_page_settings(page, drawing):
     bounds = fill_artwork_bounds(drawing)
     if bounds is not None and int(page.obj.get('/Rotate', 0)) == 0 and float(page.obj.get('/UserUnit', 1)) == 1:
         page.obj.ArtBox = pikepdf.Array(bounds)
     group = page.obj.get('/Group')
     if drawing.color_model != 'CMYK':
+        return
+    if any(spot.lab is not None for spot in drawing.spots) and profiled_spot_resources(page.Resources):
         return
     def opaque_cmyk(item):
         if not isinstance(item, PaintedPath) or item.state.blend_mode != 'Normal':
@@ -66,10 +92,9 @@ def align_page_settings(page, drawing):
             paints.append((item.state.stroke,item.state.stroke_alpha))
         return all(alpha == 1 and isinstance(color,Color)
                    and color.model in ('CMYK','Gray','Spot')
-                   and (color.spot is None or color.spot.lab is None)
                    for color,alpha in paints)
     # Adobe omits the redundant CMYK page blending group for opaque process
-    # and CMYK spot paths, including clipped/stroked paths. Retain the actual
+    # and registered Lab/CMYK spot paths, including clipped/stroked paths. Retain the actual
     # overprint states in the resources and editing stream.
     if ((group is None or str(group.get('/S')) == '/Transparency'
          and str(group.get('/CS')) == '/DeviceCMYK'

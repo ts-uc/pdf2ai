@@ -124,3 +124,65 @@ def test_separate_toyo_scribus_palettes(filename, prefix, count):
         assert [float(attributes[key]) for key in ('L', 'A', 'B')] == _colors()[attributes['NAME']]['lab']
     dic_entries = ET.parse(root/'integrations/scribus/palettes/DIC_Lab.xml').getroot().findall('COLOR')
     assert len(dic_entries) == 1280 and all(entry.attrib['NAME'].startswith('DIC ') for entry in dic_entries)
+
+
+@pytest.mark.parametrize('combined',[False,True])
+def test_lab_aliases_use_one_pdf_plate_and_keep_actual_lab_values(tmp_path,combined):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(200,100))
+    full=[44,55,-16]
+    page.Resources=pikepdf.Dictionary(ColorSpace=pikepdf.Dictionary(
+        A=separation('CF10001',full,lab=True),B=separation('CF 10001*',full,lab=True),
+        C=separation('TOYO 1',[45,54,-18],lab=True)))
+    page.Contents=pdf.make_stream(b'/A cs 1 scn 10 10 30 30 re f '
+        b'/B cs .5 scn 50 10 30 30 re f /C cs 1 scn 90 10 30 30 re f')
+    source=tmp_path/'source.pdf';output=tmp_path/'out.ai';pdf.save(source);original=source.read_bytes()
+    (convert_document if combined else convert)(source,output,raster_fallback=False)
+    with pikepdf.open(output) as ai:
+        spaces=ai.pages[0].Resources.ColorSpace
+        assert {str(space[1])[1:] for space in spaces.values()}=={'CF 10001*','TOYO 0001'}
+        for key in ('A','B'):
+            assert list(map(float,spaces['/'+key][3].C1))==full
+        assert read_private(ai).count(b'(CF 10001*)\rPc')==1
+    assert source.read_bytes()==original
+
+
+def test_opaque_toyo_lab_and_process_black_omit_redundant_cmyk_group(tmp_path):
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    page.Group=pikepdf.Dictionary(S=pikepdf.Name.Transparency,CS=pikepdf.Name.DeviceCMYK)
+    page.Resources=pikepdf.Dictionary(ColorSpace=pikepdf.Dictionary(
+        S=separation('TOYO 1',toyo_color('TOYO 1')['lab'],lab=True)))
+    page.Contents=pdf.make_stream(b'/S cs .5 scn 10 10 30 30 re f 0 0 0 1 k 50 10 30 30 re f')
+    source=tmp_path/'source.pdf';output=tmp_path/'out.ai';pdf.save(source)
+    convert(source,output,raster_fallback=False)
+    with pikepdf.open(output) as result:
+        assert '/Group' not in result.pages[0].obj
+        instructions=list(pikepdf.parse_content_stream(result.pages[0]))
+        assert str(instructions[0].operator)=='ri' and str(instructions[0].operands[0])=='/Perceptual'
+        assert list(map(float,result.pages[0].Resources.ColorSpace.S[3].C1))==pytest.approx(toyo_color('TOYO 1')['lab'])
+
+
+@pytest.mark.parametrize('condition',['transparent','blend','isolated','knockout','profiled'])
+def test_toyo_lab_keeps_nontrivial_or_profiled_blending_context(condition):
+    from pdf2ai.document_defaults import align_page_settings
+    from pdf2ai.vector import read_drawing
+    pdf=pikepdf.new();page=pdf.add_blank_page(page_size=(100,100))
+    group=pikepdf.Dictionary(S=pikepdf.Name.Transparency,CS=pikepdf.Name.DeviceCMYK)
+    if condition=='isolated':group.I=True
+    if condition=='knockout':group.K=True
+    page.Group=group
+    space=separation('TOYO 1',toyo_color('TOYO 1')['lab'],lab=True)
+    if condition=='profiled':
+        profile=pdf.make_stream(bytes(16)+b'Lab '+bytes(108))
+        profile.N=3;profile.Alternate=space[2]
+        space[2]=pikepdf.Array([pikepdf.Name.ICCBased,profile])
+    page.Resources=pikepdf.Dictionary(ColorSpace=pikepdf.Dictionary(S=space))
+    commands=b'/S cs 1 scn 10 10 30 30 re f'
+    if condition in ('transparent','blend'):
+        page.Resources.ExtGState=pikepdf.Dictionary(A=pikepdf.Dictionary(
+            ca=.5 if condition=='transparent' else 1,
+            BM=pikepdf.Name.Multiply if condition=='blend' else pikepdf.Name.Normal))
+        commands=b'/A gs '+commands
+    page.Contents=pdf.make_stream(commands)
+    drawing=read_drawing(page,root=pdf.Root)
+    align_page_settings(page,drawing)
+    assert '/Group' in page.obj
